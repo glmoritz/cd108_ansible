@@ -1,3 +1,6 @@
 ---
 - name: update grub
   command: update-grub
+
+- name: reload udev
+  command: udevadm control --reload-rules

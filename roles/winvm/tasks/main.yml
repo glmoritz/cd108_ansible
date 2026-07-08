@@ -1,0 +1,76 @@
+---
+# The emergency Windows VM (libvirt/KVM). The DOMAIN definition and the qcow2
+# disk are image-owned (the qcow2 is received via the zfs role). Ansible owns
+# the *config layer* only: the clean-snapshot revert wiring, passwordless sudo
+# scoped to exactly that one rollback, and the launch script + desktop shortcut.
+#
+# On the golden this was made-but-untested and had a real bug: sudoers allowed
+# `zfs rollback ...@clean` while the script rolled back `...@ltspice`, so the
+# passwordless sudo never matched. Here a single var drives both.
+
+- name: Confirm the Windows disk dataset exists on this machine
+  command: "zfs list -H -o name {{ winvm_dataset }}"
+  register: winvm_ds
+  failed_when: false
+  changed_when: false
+
+- name: Wire up the Windows-VM revert (only where the VM disk is present)
+  when: winvm_ds.rc == 0
+  block:
+    - name: Confirm the clean-baseline snapshot exists
+      command: "zfs list -H -o name {{ winvm_dataset }}@{{ winvm_revert_snapshot }}"
+      changed_when: false
+      # Fails loudly if the golden didn't ship @{{ winvm_revert_snapshot }} — the
+      # entire revert UX depends on that snapshot being present.
+
+    - name: Allow course accounts to roll the VM back to clean (passwordless, scoped)
+      community.general.sudoers:
+        name: winvm-revert
+        user: "{{ discipline_users }}"
+        nopassword: true
+        commands: "/usr/sbin/zfs rollback -r {{ winvm_dataset }}@{{ winvm_revert_snapshot }}"
+        validation: required
+
+    # Deliberately OUTSIDE the rolled-back dataset (golden kept it inside
+    # /mnt/ssdpool/windows, so a rollback could revert the launcher itself).
+    - name: Deploy the Windows-VM launch script
+      template:
+        src: start-windows-vm.sh.j2
+        dest: /usr/local/bin/start-windows-vm.sh
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Deploy the "Windows VM (Reset)" desktop launcher
+      template:
+        src: windows-vm.desktop.j2
+        dest: /usr/share/applications/windows-vm.desktop
+        mode: "0644"
+
+    # --- libvirt domain + its NAT DHCP reservation ------------------------
+    # The launcher waits for RDP at a FIXED IP, which only works because the
+    # `default` network reserves that IP to the VM's MAC. Both are owned here.
+    - name: Ensure the default libvirt NAT network is active + autostart
+      community.libvirt.virt_net:
+        name: default
+        state: active
+        autostart: true
+        uri: qemu:///system
+
+    - name: Read the default network XML
+      command: virsh --connect qemu:///system net-dumpxml default
+      register: winvm_defnet
+      changed_when: false
+
+    - name: Reserve {{ winvm_ip }} for the Windows VM's MAC on the default network
+      command: >-
+        virsh --connect qemu:///system net-update default add ip-dhcp-host
+        "<host mac='{{ winvm_mac }}' name='{{ winvm_domain }}' ip='{{ winvm_ip }}'/>"
+        --live --config
+      when: winvm_mac not in winvm_defnet.stdout
+
+    - name: Define the Windows VM domain (idempotent)
+      community.libvirt.virt:
+        command: define
+        xml: "{{ lookup('template', 'win11.xml.j2') }}"
+        uri: qemu:///system

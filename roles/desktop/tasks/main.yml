@@ -1,6 +1,18 @@
 ---
-# Workstation UX. Firefox is the Ubuntu snap, which reads /etc/firefox/policies/.
+# Workstation UX. The golden runs XFCE with xrdp (RDP) for remote desktop — not
+# GNOME/VNC. Firefox is the Ubuntu snap, which reads /etc/firefox/policies/.
 
+- name: Install the XFCE desktop + xrdp + extra browser
+  apt:
+    name: "{{ desktop_packages }}"
+    state: present
+    update_cache: true
+
+- name: Enable and start xrdp
+  service: { name: xrdp, state: started, enabled: true }
+
+# --- Firefox managed policy (captive-portal bookmark) ---------------------
+# NOTE: the golden had NO policies.json deployed yet — this is net-new config.
 - name: Ensure Firefox policies dir exists
   file: { path: /etc/firefox/policies, state: directory, mode: "0755" }
 
@@ -16,7 +28,21 @@
         }
       }
 
+# --- professor's shared "clipboard" ---------------------------------------
+# Bespoke mechanism on the golden: a persistent ssdpool/clipboard dataset,
+# writable only by members of `clipboardwriters`, surfaced through xrdp's
+# sesman.ini. No native Ansible equivalent, so we own the group membership
+# here (the dataset itself is created by the zfs/server roles).
+- name: Ensure the clipboard-writers group exists
+  group: { name: "{{ clipboard_group }}", state: present }
+
+- name: Add the privileged accounts to the clipboard-writers group
+  user: { name: "{{ item }}", groups: "{{ clipboard_group }}", append: true }
+  loop: "{{ clipboard_writers }}"
+
+# TODO: port the xrdp sesman.ini clipboard wiring + the ssdpool/clipboard
+#   automount (golden: /etc/systemd/system/mnt-cd108clipboard.{mount,automount})
+#   into a template here once the desktop converge is validated on a test box.
+
 # FUTURE (not on the image yet — design, don't harvest):
 #   dconf system-db lockdown so only root changes wallpaper/desktop settings.
-# TODO(harvest): enable VNC / desktop sharing (security-scoped)
-# TODO(harvest): the professor's "clipboard" automount — confirm what it is

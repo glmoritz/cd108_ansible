@@ -1,0 +1,17 @@
+# Managed by Ansible (roles/zfs). The golden shipped an EMPTY sanoid.conf, so
+# the sanoid.timer ran but nothing was actually being snapshotted.
+{% for ds in sanoid_datasets %}
+[{{ ds }}]
+    use_template = lab
+    recursive = yes
+{% endfor %}
+
+[template_lab]
+    frequently = 0
+    hourly = {{ sanoid_retention.hourly }}
+    daily = {{ sanoid_retention.daily }}
+    weekly = {{ sanoid_retention.weekly }}
+    monthly = {{ sanoid_retention.monthly }}
+    yearly = 0
+    autosnap = yes
+    autoprune = yes

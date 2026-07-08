@@ -27,6 +27,6 @@
   notify: reload nfs exports
 
 # The server holds the golden ZFS datasets that students receive:
-#   {{ zfs_pool_server }}/golden/home/<course>   and   .../golden/winvm
+#   {{ zfs_pool_server }}/golden/home/<course>   and   .../golden/windows
 # TODO(harvest): confirm those datasets exist here and are snapshotted
 #                ({{ golden_snapshot }}) before a reset run.

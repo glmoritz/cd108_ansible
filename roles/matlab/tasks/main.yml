@@ -1,18 +1,43 @@
 ---
-# MATLAB is a campus NETWORK license (FlexLM) and the binaries are heavy, so
-# we mount them over NFS rather than installing per machine.
+# MATLAB is a LOCAL install (image-owned binary at {{ matlab_root }}) using a
+# campus NETWORK license (FlexLM). Ansible's only job is to point it at the
+# license server. Students run it as the `estudante` account.
+#
+# The role is a no-op on machines that don't ship MATLAB, so it can stay in the
+# labs converge and light up wherever the binary is present.
 
-- name: Mount MATLAB from the NFS server
-  ansible.posix.mount:
-    path: /opt/matlab
-    src: "{{ server_host }}:{{ nfs_exports.matlab }}"
-    fstype: nfs
-    opts: ro,soft,_netdev
-    state: mounted
+- name: Check whether MATLAB is installed on this machine
+  stat:
+    path: "{{ matlab_root }}"
+  register: matlab_dir
 
-# TODO(harvest): confirm the on-disk license file path (network.lic / license.dat)
-- name: Point MATLAB at the campus license server
-  copy:
-    dest: /opt/matlab/licenses/network.lic
-    content: "{{ matlab_license_server }}\n"
-  # may need to be written to a per-machine path if the NFS export is read-only
+- name: Point local MATLAB at the campus network license
+  when: matlab_dir.stat.exists
+  block:
+    - name: Ensure the MATLAB licenses dir exists
+      file:
+        path: "{{ matlab_root }}/licenses"
+        state: directory
+        mode: "0755"
+
+    - name: Write the network license pointer
+      copy:
+        dest: "{{ matlab_root }}/licenses/network.lic"
+        content: "{{ matlab_license_server }}"
+        mode: "0644"
+
+    # The golden had a custom system launcher (MATLAB isn't packaged with one).
+    - name: Deploy the MATLAB desktop launcher
+      copy:
+        dest: /usr/share/applications/matlab.desktop
+        mode: "0644"
+        content: |
+          [Desktop Entry]
+          Version=1.0
+          Type=Application
+          Name=MATLAB {{ matlab_root | basename }}
+          Exec={{ matlab_root }}/bin/matlab -desktop -softwareopengl
+          Icon={{ matlab_root }}/bin/glnxa64/cef_resources/matlab_icon.png
+          Terminal=false
+          Categories=Development;Science;
+          StartupNotify=true

@@ -1,0 +1,38 @@
+#!/bin/bash
+# Managed by Ansible (roles/winvm). Rolls the emergency Windows VM's disk back
+# to the clean teaching baseline, boots it, waits for RDP, then connects.
+# Lives in /usr/local/bin (NOT inside the rolled-back dataset) so a rollback
+# can never revert this launcher.
+set -uo pipefail
+
+VM_NAME="{{ winvm_domain }}"
+ZFS_PATH="{{ winvm_dataset }}"
+SNAPSHOT_NAME="{{ winvm_revert_snapshot }}"
+VM_IP="{{ winvm_ip }}"
+RDP_USER="{{ winvm_rdp_user }}"
+RDP_PASS="{{ winvm_rdp_password }}"
+
+echo "--- Preparing Windows VM ---"
+
+# 1. Ensure the VM is stopped
+if virsh list --name | grep -q "^${VM_NAME}$"; then
+    echo "Stopping VM..."
+    virsh destroy "$VM_NAME" >/dev/null 2>&1
+    sleep 2
+fi
+
+# 2. Roll the disk back to the clean baseline (scoped passwordless sudo)
+echo "Rolling disk back to @${SNAPSHOT_NAME}..."
+sudo zfs rollback -r "${ZFS_PATH}@${SNAPSHOT_NAME}"
+
+# 3. Start the VM
+echo "Starting VM..."
+virsh start "$VM_NAME"
+
+# 4. Wait for RDP (3389) to come up
+echo "Waiting for Windows to boot (${VM_IP}:3389)..."
+while ! nc -z -w 1 "$VM_IP" 3389; do printf "."; sleep 2; done
+echo -e "\nRemote Desktop is ready!"
+
+# 5. Connect fullscreen, matching the window resolution
+xfreerdp /v:"$VM_IP" /u:"$RDP_USER" /p:"$RDP_PASS" /f /dynamic-resolution /cert-ignore

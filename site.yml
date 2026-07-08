@@ -14,7 +14,8 @@
   roles:
     - common
     - desktop
-    - zfs           # build pool + initial receive of homes/winvm from server
+    - zfs           # build pool + initial receive of homes/windows from server
+    - winvm         # emergency Windows VM: revert wiring + launcher (needs ssdpool/windows)
     - sdr
     - matlab
     - { role: freeipa, when: "inventory_hostname in groups['freeipa_members']" }

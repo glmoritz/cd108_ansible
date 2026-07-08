@@ -1,30 +1,23 @@
 ---
-# Applied to every machine. Package installs are real; a few OS tweaks remain
-# TODO(harvest) until we read the exact settings off the golden machine.
+# Applied to every machine. Grounded in the cd108 golden harvest. Custom,
+# untested golden mechanisms (set-hostname-from-mac.sh) are replaced with the
+# idiomatic Ansible path.
 
-# --- optional apt cache (only if you decide to run one; squid was dropped) ---
+# --- apt cache proxy -------------------------------------------------------
+# Matches the golden exactly: apt-cacher-ng only proxies http, so https is
+# disabled and IPv4 is forced. (The golden also had a redundant 99proxy; we
+# keep a single canonical 01proxy.)
 - name: Route apt through the lab cache/proxy
   copy:
     dest: /etc/apt/apt.conf.d/01proxy
-    content: "Acquire::http::Proxy \"{{ apt_proxy_url }}\";\n"
+    content: |
+      Acquire::http::Proxy "{{ apt_proxy_url }}";
+      Acquire::https::Proxy "false";
+      Acquire::ForceIPv4 "true";
   when: apt_proxy_url is defined and apt_proxy_url | length > 0
 
 - name: Ensure apt keyrings dir exists
   file: { path: /etc/apt/keyrings, state: directory, mode: "0755" }
-
-# --- base packages (plain apt) -------------------------------------------
-- name: Preseed wireshark to allow non-root capture
-  debconf:
-    name: wireshark-common
-    question: wireshark-common/install-setuid
-    vtype: boolean
-    value: "true"
-
-- name: Install common packages
-  apt:
-    name: "{{ common_packages }}"
-    state: present
-    update_cache: true
 
 # --- external repos (managed here so key/URL drift is a one-file fix) -----
 - name: Add VS Code repository key
@@ -51,11 +44,57 @@
     filename: docker
     state: present
 
+- name: Add Google Chrome repository key
+  get_url:
+    url: https://dl.google.com/linux/linux_signing_key.pub
+    dest: /etc/apt/keyrings/google-chrome.asc
+    mode: "0644"
+
+- name: Add Google Chrome apt repository
+  apt_repository:
+    repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.asc] https://dl.google.com/linux/chrome/deb/ stable main"
+    filename: google-chrome
+    state: present
+
+# Qucs-S comes from the ra3xdh openSUSE Build Service repo (confirmed on golden).
+- name: Add the ra3xdh (Qucs-S) repository key
+  get_url:
+    url: https://download.opensuse.org/repositories/home:ra3xdh/xUbuntu_24.04/Release.key
+    dest: /etc/apt/keyrings/home_ra3xdh.asc
+    mode: "0644"
+
+- name: Add the ra3xdh (Qucs-S) apt repository
+  apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/home_ra3xdh.asc] https://download.opensuse.org/repositories/home:/ra3xdh/xUbuntu_24.04/ /"
+    filename: home_ra3xdh
+    state: present
+
+# --- base packages (plain apt) -------------------------------------------
+- name: Preseed wireshark to allow non-root capture
+  debconf:
+    name: wireshark-common
+    question: wireshark-common/install-setuid
+    vtype: boolean
+    value: "true"
+
+- name: Install common packages
+  apt:
+    name: "{{ common_packages }}"
+    state: present
+    update_cache: true
+
 - name: Install VS Code + Docker
   apt:
     name: [code, docker-ce, docker-ce-cli, containerd.io, docker-compose-plugin]
     state: present
     update_cache: true
+
+# Heavy/local apps: image-owned binaries plus apt packages. The *-udev-rules
+# packages install the ST-Link / J-Link udev rules (no custom rule needed).
+- name: Install TeX, embedded toolchain, and virtualization stacks
+  apt:
+    name: "{{ tex_packages + embedded_packages + virt_packages }}"
+    state: present
 
 # --- users ----------------------------------------------------------------
 - name: Create one user per discipline (homes land on the ZFS datasets)
@@ -65,8 +104,9 @@
     create_home: true
   loop: "{{ discipline_users }}"
 
-- name: Let the `redes` account use docker without sudo
-  user: { name: redes, groups: docker, append: true }
+- name: Let course accounts use docker without sudo
+  user: { name: "{{ item }}", groups: docker, append: true }
+  loop: "{{ docker_users }}"
 
 - name: Enable and start SSH
   apt: { name: openssh-server, state: present }
@@ -76,6 +116,12 @@
     user: "{{ admin_user | default('daelt') }}"
     key: "{{ professor_ssh_pubkey }}"
   when: professor_ssh_pubkey is defined
+
+# --- hostname (declarative, replaces the golden's set-hostname-from-mac.sh) -
+# Name the host in inventory and Ansible applies it — no boot-time MAC script.
+- name: Set the hostname from inventory
+  ansible.builtin.hostname:
+    name: "{{ inventory_hostname_short }}"
 
 # --- GRUB (headless, no grub-customizer) ---------------------------------
 - name: Configure GRUB defaults
@@ -88,12 +134,29 @@
     - { key: GRUB_TIMEOUT_STYLE, value: menu }
   notify: update grub
 
-# --- system tweaks (fill exact values from harvest) ----------------------
-# TODO(harvest): hostname per-MAC — set from inventory var, declaratively
-# TODO(harvest): enable swap (watch the ZFS zvol case)
-# TODO(harvest): timedatectl set-local-rtc 1  (dual-boot clock — still needed?)
-# TODO(harvest): disable IPv6 privacy extensions (sysctl/netplan)
-# TODO(harvest): enable Wake-on-LAN, OS side (ethtool persist)
-# TODO(harvest): cron — shut down machines not logged into `daelt`
-# TODO(harvest): udev rule giving the practice UART kits a stable /dev symlink
-#   (get idVendor/idProduct via `udevadm info` on a plugged-in kit)
+# --- system tweaks (exact values confirmed from the golden) --------------
+# Resolved at harvest: swap is an image-owned /swap.img swapfile; RTC is UTC
+# (no set-local-rtc needed now Windows is a VM); no idle-shutdown cron exists;
+# no /var/tmp symlink. IPv6 privacy extensions are off (use_tempaddr = 0).
+- name: Disable IPv6 privacy extensions
+  ansible.posix.sysctl:
+    name: "net.ipv6.conf.{{ item }}.use_tempaddr"
+    value: "0"
+    sysctl_set: true
+    state: present
+    reload: true
+  loop: [all, default]
+
+# Wake-on-LAN: the NIC supports magic-packet wake but ships disabled. A udev
+# rule is the standard persistent way (no dedicated Ansible module).
+- name: Enable Wake-on-LAN (magic packet) via udev rule
+  copy:
+    dest: /etc/udev/rules.d/70-wol.rules
+    content: |
+      ACTION=="add", SUBSYSTEM=="net", NAME=="{{ wol_interface }}", RUN+="/usr/sbin/ethtool -s {{ wol_interface }} wol g"
+  notify: reload udev
+
+# TODO(harvest): udev rule giving the practice UART kits a STABLE /dev symlink.
+#   ST-Link/J-Link/OpenOCD rules come from their -udev-rules packages already;
+#   this is only for the generic serial kits. Needs idVendor/idProduct from a
+#   plugged-in kit: `udevadm info -a -n /dev/ttyUSB0 | grep -m2 'idVendor\|idProduct'`

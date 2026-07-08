@@ -1,14 +1,19 @@
 ---
-# Clonezilla images a 250 GB ext4 Ubuntu; the REST of the disk is ZFS that
-# Ansible builds (Clonezilla can't do ZFS). Destructive ops are guarded so they
-# run only on a fresh machine. The actual home *reset* lives in reset-homes.yml.
+# Clonezilla images the ext4 Ubuntu; the REST of the disk is ZFS that Ansible
+# builds (Clonezilla can't do ZFS). On the golden the pool is `ssdpool` (sda4),
+# with per-course homes under ssdpool/home (each with a `Downloads` child so
+# bulky downloads survive a reset) and the emergency Windows VM at
+# ssdpool/windows. Destructive ops are guarded to fresh machines only; the
+# actual home *reset* lives in reset-homes.yml.
 
-- name: Install ZFS + auto-snapshot + mbuffer (for throttled recv)
+- name: Install ZFS + sanoid (snapshots) + send/recv throughput tools
   apt:
     name:
       - zfsutils-linux
-      - zfs-auto-snapshot
+      - sanoid            # golden uses sanoid/syncoid, NOT zfs-auto-snapshot
       - mbuffer
+      - pv
+      - lzop
     state: present
     update_cache: true
 
@@ -38,23 +43,40 @@
   command: "zpool create {{ zfs_pool }} {{ zfs_data_device }}"
   when: zpool_check.rc != 0 and zfs_target_blkid.rc != 0
 
+# --- snapshots: sanoid config (golden shipped an EMPTY sanoid.conf) --------
+- name: Ensure the sanoid config dir exists
+  file: { path: /etc/sanoid, state: directory, mode: "0755" }
+
+- name: Template the sanoid retention policy
+  template:
+    src: sanoid.conf.j2
+    dest: /etc/sanoid/sanoid.conf
+    mode: "0644"
+
+# --- initial receive of the golden datasets (throttled, once) --------------
+# Course homes carry their `Downloads` child, so the send is recursive (-R).
 - name: Initial receive of course homes from the server (throttled, once)
   shell: >
-    zfs send {{ zfs_pool_server }}/golden/home/{{ item }}@{{ golden_snapshot }}
+    zfs send -R {{ zfs_pool_server }}/golden/home/{{ item }}@{{ golden_snapshot }}
     | mbuffer -q -r {{ zfs_recv_rate }}
     | ssh {{ inventory_hostname }} "zfs recv -F {{ zfs_pool }}/home/{{ item }}"
   delegate_to: "{{ server_host }}"
   args:
-    creates: "/{{ zfs_pool }}/home/{{ item }}"
+    creates: "/home/{{ item }}"
   loop: "{{ discipline_users }}"
 
 - name: Initial receive of the Windows emergency VM (throttled, once)
   shell: >
-    zfs send {{ zfs_pool_server }}/golden/winvm@{{ golden_snapshot }}
+    zfs send {{ zfs_pool_server }}/golden/windows@{{ golden_snapshot }}
     | mbuffer -q -r {{ zfs_recv_rate }}
-    | ssh {{ inventory_hostname }} "zfs recv -F {{ zfs_pool }}/winvm"
+    | ssh {{ inventory_hostname }} "zfs recv -F {{ zfs_pool }}/windows"
   delegate_to: "{{ server_host }}"
   args:
-    creates: "/{{ zfs_pool }}/winvm"
+    creates: "/{{ zfs_pool }}/windows"
 
-# TODO(harvest): confirm mountpoints so /home/<course> resolves to these datasets.
+# The parent ssdpool/home dataset is mounted at /home; per-user datasets inherit
+# to /home/<course>. The recursive send should carry the golden's `mountpoint`
+# props; this makes the /home mount explicit in case a fresh recv differs.
+- name: Ensure ssdpool/home is mounted at /home
+  command: "zfs set mountpoint=/home {{ zfs_pool }}/home"
+  changed_when: false

@@ -8,8 +8,8 @@ The **Clonezilla golden image** carries the current semester. This repo captures
 the *config layer* on top of a booted machine so next semester you edit text
 instead of clicking. Over time the image gets leaner and the playbook grows.
 
-- **Image owns:** 250 GB **ext4** Ubuntu partition, base OS, heavy proprietary
-  binaries for now (MATLAB, Code Composer, TeX).
+- **Image owns:** ext4 Ubuntu partition, base OS, heavy proprietary/local
+  binaries for now (MATLAB at `/usr/local/MATLAB`, STM32CubeIDE, full TeX).
 - **Ansible owns:** everything that varies or changes over time — *and* the
   **ZFS pool** (Clonezilla can't do ZFS), user homes, and lab-specific config.
 
@@ -29,7 +29,9 @@ instead of clicking. Over time the image gets leaner and the playbook grows.
 
 ## Homes & the ZFS reset flow
 
-- Homes are **local ZFS**, one dataset per **course account** (not per student).
+- Homes are **local ZFS** (pool `ssdpool`), one dataset per **course account**
+  (not per student), each with a separate `Downloads` **child dataset** so bulky
+  downloads survive a home reset.
 - Students upload to the cloud at end of class; homes are reset between
   semesters by **`zfs recv` of a freshly-built golden** from the server — not a
   local `zfs rollback` (rollback breaks vscode: old config vs. updated binary).
@@ -46,10 +48,11 @@ site.yml                   normal converge (safe to re-run)
 reset-homes.yml            DELIBERATE home reset (run by hand over break)
 harvest.sh                 run ON the golden machine to capture reality
 roles/common/             packages, external repos, users, ssh, grub, tweaks
-roles/desktop/            firefox captive-portal bookmark, dconf lockdown, VNC
-roles/zfs/                build pool + initial receive of homes/winvm
+roles/desktop/            XFCE + xrdp, firefox captive-portal bookmark, clipboard group
+roles/zfs/                build pool + sanoid + initial receive of homes/windows
+roles/winvm/              Windows-VM revert wiring: scoped NOPASSWD sudo + launcher
 roles/sdr/                full SDR++/UHD/LibreSDR build (your procedure)
-roles/matlab/             NFS mount + campus network license
+roles/matlab/             LOCAL install; Ansible writes the network.lic
 roles/server/             NFS exchange folder (sticky) + golden datasets
 roles/freeipa/            join FreeIPA (only freeipa_members)
 ```
@@ -61,20 +64,22 @@ roles/freeipa/            join FreeIPA (only freeipa_members)
 | build-essential, git, nmap, wireshark, tcpdump, gparted, gimp, inkscape, pinta, xournalpp, mosquitto_clients, moserial, openocd, boot-repair | common | plain apt; wireshark debconf preseeded |
 | vscode, docker | common | **managed external repos** — key/URL drift = one-file fix |
 | enable ssh, prof's key on students | common | passwordless prof→student |
-| user per course, docker sem sudo (redes) | common | `redes` → docker group |
+| user per course, docker sem sudo | common | **all** course accounts + daelt → docker group |
 | grub (headless) | common | `/etc/default/grub` + update-grub, no GUI tool |
-| rename PC por MAC | common | declarative via inventory (TODO harvest) |
-| swap, RTC local, ipv6 privacy off, WoL, idle-shutdown cron | common | TODO(harvest) exact values |
-| UART kit verify | common | **udev rule** for stable /dev symlink (TODO harvest) |
-| firefox captive-portal bookmark | desktop | policies.json (snap path) |
-| VNC, prof "clipboard" | desktop | TODO(harvest) |
+| rename PC por MAC | common | declarative via inventory hostname (native module) |
+| swap, RTC, ipv6 privacy, WoL | common | swap=image swapfile; RTC=UTC (dropped); `use_tempaddr=0`; WoL via 70-wol.rules |
+| idle-shutdown cron | — | **doesn't exist** — dropped |
+| UART kit verify | common | ST-Link/J-Link/OpenOCD via `*-udev-rules` pkgs; generic UART symlink still TODO |
+| firefox captive-portal bookmark | desktop | policies.json (snap path); net-new, not on golden yet |
+| xrdp (RDP), prof "clipboard" | desktop | xrdp + `clipboardwriters` group + `ssdpool/clipboard` |
 | wallpaper/desktop lockdown | desktop | **future** — not on the image yet |
-| ZFS pool on free space, recv homes + winvm | zfs | Ansible builds pool; throttled recv |
-| zfs-auto-snapshot | zfs | installed with pool |
+| ZFS pool on free space, recv homes + windows | zfs | Ansible builds `ssdpool`; throttled recv |
+| Windows emergency VM (revert-on-launch) | winvm | templated libvirt domain + NAT DHCP reservation; rolls disk to `@ltspice`; scoped NOPASSWD `zfs rollback`; `Windows VM (Reset)` launcher. Only the qcow2 is image-owned. **RDP password must be vaulted.** |
+| sanoid snapshots | zfs | `sanoid.conf` templated (golden's was empty → no-op) |
 | home reset | reset-homes.yml | deliberate `zfs recv` of golden |
 | rtlsdr, pluto, sdr++, uhd, LibreSDR fw | sdr | your full procedure, idempotent |
-| matlab (network license) | matlab | NFS mount + license server |
-| tex, code composer | (heavy/NFS) | serve over NFS, cache on server |
+| matlab (network license) | matlab | **LOCAL** install; Ansible writes `network.lic` |
+| tex, STM32CubeIDE, ARM GCC, J-Link | common | **LOCAL** apt/opt (image-owned binaries), not NFS |
 | NFS exchange "troca" folder | server | mode 1777 sticky = prof files undeletable |
 | freeipa join | freeipa | **only ca307**; domain/realm in group_vars/ca307.yml, secret in Vault |
 
@@ -95,10 +100,15 @@ roles/freeipa/            join FreeIPA (only freeipa_members)
 
 ## Workflow
 
-1. **Now:** skeleton + `harvest.sh` ready; package lists + SDR + external repos real.
-2. **At UTFPR (SSH):** run `./harvest.sh` on the golden machine; hand back
-   `harvest_out/` to fill the remaining TODO(harvest) stubs.
-3. `ansible-playbook site.yml --limit <one-test-machine>`, then roll out.
+1. **Done:** harvested the cd108 golden (`cd108-test-01`); vars + roles are now
+   grounded in reality (`harvest_out/` is gitignored, not committed).
+2. **Next:** add real host entries to `inventory/hosts.yml`, then
+   `ansible-playbook site.yml --check --limit <one-test-machine>` (dry run).
+3. Converge the one test machine for real, validate, then roll out in waves.
+
+Remaining TODO(harvest) (need a plugged-in device / the server, not the golden):
+generic UART-kit stable-symlink udev rule; server-side golden dataset layout;
+the xrdp `sesman.ini` clipboard wiring + `ssdpool/clipboard` automount.
 
 ## Phases
 

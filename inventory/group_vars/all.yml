@@ -1,3 +1,9 @@
+# ===========================================================================
+# Values below are grounded in a harvest of the cd108 golden (cd108-test-01,
+# Ubuntu 24.04.4). Where the golden used a bespoke, untested mechanism we use
+# the idiomatic Ansible path instead (hostname, home reset, WoL).
+# ===========================================================================
+
 # ---------------------------------------------------------------------------
 # The infra hub (professor's PC). Referenced everywhere as server_host.
 # ---------------------------------------------------------------------------
@@ -5,36 +11,56 @@ server_host: cd108.tutu.eng.br        # lab hub today → becomes the server VM'
 admin_user: daelt
 # professor_ssh_pubkey: "ssh-ed25519 AAAA..."   # set to enable passwordless admin SSH
 
-# apt cache: apt-cacher-ng currently runs on the professor's DAILY DRIVER
-# (transitional — not full production). Scan it at harvest; moves to the
-# server/VM in production, at which point this becomes {{ server_host }}:3142.
-apt_proxy_url: "http://103.0.1.16:3142"
+# apt cache: apt-cacher-ng runs on the SERVER (confirmed on the golden, which
+# points here). apt-cacher-ng only proxies http, so https is disabled and we
+# force IPv4 — the common role writes exactly this into /etc/apt/apt.conf.d.
+# (103.0.1.16 was only the transitional daily-driver; the server is canonical.)
+apt_proxy_url: "http://{{ server_host }}:3142"
 
 # --- NFS: the public "troca" exchange folder (sticky-bit protected) -------
 nfs_exchange_dir: /srv/troca
 nfs_export_clients: "10.0.0.0/8"        # tighten to your lab subnet(s)
 
-# --- MATLAB: campus network license (FlexLM), binaries served over NFS ----
-nfs_exports:
-  matlab: "/srv/nfs/matlab"
-matlab_license_server: "SERVER licsrv.utfpr.edu.br 27000"
+# --- MATLAB: LOCAL install, campus NETWORK license (FlexLM) ---------------
+# The binary is image-owned at matlab_root; Ansible only writes the network
+# license pointer. Students run it as the `estudante` account.
+matlab_root: /usr/local/MATLAB/R2024b
+matlab_license_server: |
+  SERVER licencas.ct.utfpr.edu.br 0AAA81D7B626 27000
+  USE_SERVER
 
-# --- ZFS: pool built by Ansible on the free space after the 250 GB Ubuntu --
-zfs_pool: tank                          # local pool name on each student machine
-# Clonezilla leaves this as an UNFORMATTED partition with GPT partlabel "zfs",
-# so the target is deterministic (no guessing /dev/sdaN). The zfs role refuses
-# to create the pool if this partition already contains data.
-zfs_data_device: /dev/disk/by-partlabel/zfs
-zfs_pool_server: tank                   # pool name ON the server holding the goldens
+# --- ZFS: pool built by Ansible on the free space after the ext4 Ubuntu ---
+# Golden reality: pool name is `ssdpool` on sda4 (fs LABEL ssdpool). Homes are
+# one dataset per course account under ssdpool/home, each with a SEPARATE
+# `Downloads` child dataset so bulky downloads survive a home reset. The
+# emergency Windows VM is ssdpool/windows.
+zfs_pool: ssdpool                       # local pool name on each student machine
+zfs_data_device: /dev/disk/by-partlabel/zfs   # Clonezilla leaves this unformatted+labelled
+zfs_pool_server: ssdpool                # pool name ON the server holding the goldens
 golden_snapshot: golden                 # snapshot name of the golden datasets
 zfs_recv_rate: 50M                      # mbuffer throttle (bandwidth cap over break days)
 
-# One account per COURSE (not per student). Homes are the received ZFS datasets.
+# ZFS snapshots are managed by SANOID (installed with the pool). The golden had
+# sanoid installed with an EMPTY config (so nothing was actually snapshotting) —
+# the zfs role now templates a real retention policy for the home datasets.
+sanoid_datasets:
+  - "{{ zfs_pool }}/home"
+sanoid_retention: { hourly: 24, daily: 14, weekly: 4, monthly: 3 }
+
+# One account per COURSE (not per student). Homes are the received ZFS datasets;
+# these are the accounts whose homes get reset by reset-homes.yml. `daelt` is
+# the admin account (admin_user) and is NOT reset.
 discipline_users:
+  - microcontroladores
+  - redes
+  - estudante
+
+# Docker without sudo: on the golden ALL course accounts + daelt are in `docker`.
+docker_users:
   - daelt
   - redes
   - microcontroladores
-# - add the rest as confirmed from the machine
+  - estudante
 
 # --- SDR: build once on the server, distribute the artifact ---------------
 sdr_dist_dir: /srv/nfs/sdr
@@ -62,21 +88,49 @@ sdr_packages:
   - libiio-dev
   - libad9361-dev
   - portaudio19-dev
-  - libqt5widgets5
+  - libqt5widgets5t64        # golden ships the t64 (time_t 64-bit) variant on 24.04
   - uhd-host
   - rtl-sdr
 
-# --- Desktop --------------------------------------------------------------
+# --- Desktop: XFCE + xrdp (RDP), not GNOME/VNC ----------------------------
 captive_portal_url: "https://captiveportal.utfpr.edu.br"   # confirm real URL
+desktop_packages:
+  - xfce4
+  - xfce4-goodies
+  - xrdp                     # remote desktop is RDP, not VNC
+  - gnome-remote-desktop
+  - freerdp2-x11
+  - google-chrome-stable     # extra browser alongside the Firefox snap
 
-# --- Packages that are plain apt installs (from your notes) ---------------
+# The professor's shared "clipboard": a persistent ssdpool/clipboard dataset,
+# writable only by members of this group, surfaced through xrdp's sesman.ini.
+# (Bespoke — no native Ansible equivalent; see roles/desktop.)
+clipboard_group: clipboardwriters
+clipboard_writers:
+  - daelt
+  - microcontroladores
+
+# --- WoL: NIC supports it; enable magic-packet wake via a udev rule -------
+wol_interface: eno1
+
+# --- Packages that are plain apt installs ---------------------------------
 common_packages:
   - build-essential
+  - cmake
   - git
+  - curl
+  - wget
+  - vim
+  - net-tools
   - nmap
   - wireshark
   - tcpdump
+  - plocate
   - gparted
+  - gdebi
+  - ethtool
+  - meld
+  - qdirstat
   - gimp
   - inkscape
   - pinta
@@ -84,5 +138,58 @@ common_packages:
   - mosquitto-clients
   - moserial
   - openocd
+  - openssh-server
   - nfs-common
-  - boot-repair
+  - netcat-openbsd          # `nc` — start-windows-vm.sh polls RDP with it
+  - python3-pip
+  - python3-venv
+
+# --- Heavy/local apps (image-owned binaries + apt; NOT served over NFS) ---
+# Confirmed local on the golden. TeX is a full local install; the embedded
+# toolchain is ST (STM32CubeIDE + ST-Link) + SEGGER J-Link + ARM GNU GCC.
+# The *-udev-rules packages ship the udev rules, so no custom rule needed for
+# ST-Link/J-Link (OpenOCD ships its own too).
+tex_packages:
+  - texlive-full
+embedded_packages:
+  - stlink-tools
+  - st-stlink-server
+  - st-stlink-udev-rules
+  - st-stm32cubeide-2.1.1
+  - segger-jlink-udev-rules
+  - qucs-s                   # from the ra3xdh OBS repo (see external repos)
+
+# --- Virtualization: the Windows emergency VM + wine for lighter Win apps -
+virt_packages:
+  - qemu-system-x86
+  - libvirt-daemon-system
+  - libvirt-clients
+  - virt-manager
+  - virt-install
+  - python3-libvirt          # community.libvirt.* modules need these on the target
+  - python3-lxml
+  - wine64
+  - winetricks
+
+# --- Windows emergency VM (libvirt/KVM; disk = qcow2 on ssdpool/windows) ---
+# The DOMAIN + qcow2 are image-owned (qcow2 received via the zfs role). Ansible
+# owns the *config layer*: the revert wiring + scoped passwordless sudo + the
+# launcher. On each launch the disk is rolled back to a clean teaching baseline.
+# NOTE: the golden's sudoers allowed @clean but the script reverted to @ltspice
+# (a no-password-match bug) — this single var now drives BOTH, consistently.
+winvm_domain: win11
+winvm_dataset: "{{ zfs_pool }}/windows"
+winvm_disk_path: "/mnt/{{ winvm_dataset }}/windows.qcow2"   # qcow2 in the dataset
+winvm_revert_snapshot: ltspice          # clean baseline: bare Windows + LTspice
+winvm_ip: 192.168.122.67                # VM's IP (DHCP reservation on the NAT net)
+# UUID/MAC are kept identical fleet-wide ON PURPOSE: each host's libvirt + NAT is
+# isolated (no collision), the DHCP reservation is keyed on the MAC, and a stable
+# UUID keeps the guest's Windows activation happy.
+winvm_uuid: "056f95c3-af04-46a7-9d97-140fdd1612c3"
+winvm_mac: "52:54:00:ba:e3:f0"
+winvm_memory_mib: 4096
+winvm_vcpus: 4
+winvm_rdp_user: daelt
+# SECURITY: the golden shipped this password in a world-readable script. Put the
+# REAL value in a VAULTED var (ansible-vault), never in plaintext here.
+winvm_rdp_password: "CHANGEME-vault-this"
