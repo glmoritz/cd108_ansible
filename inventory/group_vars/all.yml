@@ -9,6 +9,7 @@
 # ---------------------------------------------------------------------------
 server_host: cd108.tutu.eng.br        # lab hub today → becomes the server VM's IP later
 admin_user: daelt
+ansible_user: "{{ admin_user }}"      # push connects over SSH as the admin account
 # professor_ssh_pubkey: "ssh-ed25519 AAAA..."   # set to enable passwordless admin SSH
 
 # apt cache: apt-cacher-ng runs on the SERVER (confirmed on the golden, which
@@ -45,7 +46,15 @@ zfs_recv_rate: 50M                      # mbuffer throttle (bandwidth cap over b
 # the zfs role now templates a real retention policy for the home datasets.
 sanoid_datasets:
   - "{{ zfs_pool }}/home"
-sanoid_retention: { hourly: 24, daily: 14, weekly: 4, monthly: 3 }
+# frequent_period=15 + the packaged sanoid.timer (every 15 min) gives 15-minute
+# snapshots; `frequently` is how many of those to keep (4 = last hour).
+sanoid_retention:
+  frequently: 4
+  frequent_period: 15
+  hourly: 24
+  daily: 14
+  weekly: 4
+  monthly: 3
 
 # One account per COURSE (not per student). Homes are the received ZFS datasets;
 # these are the accounts whose homes get reset by reset-homes.yml. `daelt` is
@@ -168,6 +177,9 @@ virt_packages:
   - virt-install
   - python3-libvirt          # community.libvirt.* modules need these on the target
   - python3-lxml
+  - ovmf                     # secure-boot UEFI firmware the win11 domain requires
+  - swtpm                    # emulated TPM 2.0 (the domain has a <tpm> device)
+  - swtpm-tools
   - wine64
   - winetricks
 

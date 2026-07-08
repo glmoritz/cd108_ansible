@@ -7,7 +7,8 @@
 {% endfor %}
 
 [template_lab]
-    frequently = 0
+    frequently = {{ sanoid_retention.frequently }}
+    frequent_period = {{ sanoid_retention.frequent_period }}
     hourly = {{ sanoid_retention.hourly }}
     daily = {{ sanoid_retention.daily }}
     weekly = {{ sanoid_retention.weekly }}
