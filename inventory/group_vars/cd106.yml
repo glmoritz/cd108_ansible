@@ -1,0 +1,2 @@
+# Particularities for lab cd106. Override any all.yml var here, or add
+# lab-specific packages/config. Empty = inherits the common defaults.

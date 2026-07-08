@@ -1,0 +1,7 @@
+# Particularities for lab ca307 — the FreeIPA lab.
+# FreeIPA join settings (domain/realm/server) go here once captured from an
+# already-joined machine. The join PASSWORD must live in a vaulted file, never here.
+#
+# freeipa_domain: ca307.utfpr.edu.br
+# freeipa_realm:  CA307.UTFPR.EDU.BR
+# freeipa_server: ipa.ca307.utfpr.edu.br

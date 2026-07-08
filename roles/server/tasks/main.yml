@@ -1,0 +1,32 @@
+---
+# The professor's PC: infra hub. No Samba, no Squid (both dropped as messy).
+# Just NFS: the shared "troca" exchange folder + it holds the golden datasets.
+
+- name: Install NFS server, apt cache, and Wake-on-LAN sender
+  apt:
+    name:
+      - nfs-kernel-server
+      - apt-cacher-ng      # apt proxy: clients fetch each package once, then cache
+      - wakeonlan
+    state: present
+    update_cache: true
+
+# Public free-for-all exchange folder. Mode 1777 = sticky bit: everyone can
+# create files, but you can only delete files YOU own — so a professor's files
+# can't be deleted by students. Same semantics as /tmp.
+- name: Create the shared exchange folder (sticky)
+  file:
+    path: "{{ nfs_exchange_dir }}"
+    state: directory
+    mode: "1777"
+
+- name: Export the exchange folder over NFS
+  lineinfile:
+    path: /etc/exports
+    line: "{{ nfs_exchange_dir }} {{ nfs_export_clients }}(rw,sync,no_subtree_check)"
+  notify: reload nfs exports
+
+# The server holds the golden ZFS datasets that students receive:
+#   {{ zfs_pool_server }}/golden/home/<course>   and   .../golden/winvm
+# TODO(harvest): confirm those datasets exist here and are snapshotted
+#                ({{ golden_snapshot }}) before a reset run.

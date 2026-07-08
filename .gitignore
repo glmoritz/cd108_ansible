@@ -1,0 +1,5 @@
+# never commit decrypted secrets or harvest dumps
+*.retry
+harvest_out/
+.vault_pass
+inventory/group_vars/**/vault.yml.plain

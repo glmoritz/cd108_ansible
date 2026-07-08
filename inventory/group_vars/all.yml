@@ -1,0 +1,88 @@
+# ---------------------------------------------------------------------------
+# The infra hub (professor's PC). Referenced everywhere as server_host.
+# ---------------------------------------------------------------------------
+server_host: cd108.tutu.eng.br        # lab hub today → becomes the server VM's IP later
+admin_user: daelt
+# professor_ssh_pubkey: "ssh-ed25519 AAAA..."   # set to enable passwordless admin SSH
+
+# apt cache: apt-cacher-ng currently runs on the professor's DAILY DRIVER
+# (transitional — not full production). Scan it at harvest; moves to the
+# server/VM in production, at which point this becomes {{ server_host }}:3142.
+apt_proxy_url: "http://103.0.1.16:3142"
+
+# --- NFS: the public "troca" exchange folder (sticky-bit protected) -------
+nfs_exchange_dir: /srv/troca
+nfs_export_clients: "10.0.0.0/8"        # tighten to your lab subnet(s)
+
+# --- MATLAB: campus network license (FlexLM), binaries served over NFS ----
+nfs_exports:
+  matlab: "/srv/nfs/matlab"
+matlab_license_server: "SERVER licsrv.utfpr.edu.br 27000"
+
+# --- ZFS: pool built by Ansible on the free space after the 250 GB Ubuntu --
+zfs_pool: tank                          # local pool name on each student machine
+# Clonezilla leaves this as an UNFORMATTED partition with GPT partlabel "zfs",
+# so the target is deterministic (no guessing /dev/sdaN). The zfs role refuses
+# to create the pool if this partition already contains data.
+zfs_data_device: /dev/disk/by-partlabel/zfs
+zfs_pool_server: tank                   # pool name ON the server holding the goldens
+golden_snapshot: golden                 # snapshot name of the golden datasets
+zfs_recv_rate: 50M                      # mbuffer throttle (bandwidth cap over break days)
+
+# One account per COURSE (not per student). Homes are the received ZFS datasets.
+discipline_users:
+  - daelt
+  - redes
+  - microcontroladores
+# - add the rest as confirmed from the machine
+
+# --- SDR: build once on the server, distribute the artifact ---------------
+sdr_dist_dir: /srv/nfs/sdr
+sdr_packages:
+  - build-essential
+  - cmake
+  - git
+  - wget
+  - libfftw3-dev
+  - libairspy-dev
+  - libairspyhf-dev
+  - libhackrf-dev
+  - librtlsdr-dev
+  - libsoapysdr-dev
+  - libuhd-dev
+  - qtbase5-dev
+  - qtchooser
+  - qt5-qmake
+  - libglfw3-dev
+  - libglfw3
+  - qttools5-dev-tools
+  - libzstd-dev
+  - librtaudio-dev
+  - libpulse-dev
+  - libiio-dev
+  - libad9361-dev
+  - portaudio19-dev
+  - libqt5widgets5
+  - uhd-host
+  - rtl-sdr
+
+# --- Desktop --------------------------------------------------------------
+captive_portal_url: "https://captiveportal.utfpr.edu.br"   # confirm real URL
+
+# --- Packages that are plain apt installs (from your notes) ---------------
+common_packages:
+  - build-essential
+  - git
+  - nmap
+  - wireshark
+  - tcpdump
+  - gparted
+  - gimp
+  - inkscape
+  - pinta
+  - xournalpp
+  - mosquitto-clients
+  - moserial
+  - openocd
+  - nfs-common
+  - boot-repair

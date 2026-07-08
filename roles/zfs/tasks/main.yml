@@ -1,0 +1,60 @@
+---
+# Clonezilla images a 250 GB ext4 Ubuntu; the REST of the disk is ZFS that
+# Ansible builds (Clonezilla can't do ZFS). Destructive ops are guarded so they
+# run only on a fresh machine. The actual home *reset* lives in reset-homes.yml.
+
+- name: Install ZFS + auto-snapshot + mbuffer (for throttled recv)
+  apt:
+    name:
+      - zfsutils-linux
+      - zfs-auto-snapshot
+      - mbuffer
+    state: present
+    update_cache: true
+
+- name: Check whether the pool already exists
+  command: "zpool list -H -o name {{ zfs_pool }}"
+  register: zpool_check
+  failed_when: false
+  changed_when: false
+
+# Safety: Clonezilla leaves {{ zfs_data_device }} as an UNFORMATTED labeled
+# partition. Refuse to touch it if anything already lives there — cheap
+# insurance against wiping the wrong place.
+- name: Probe the ZFS target for an existing filesystem/signature
+  command: "blkid -p {{ zfs_data_device }}"
+  register: zfs_target_blkid
+  failed_when: false
+  changed_when: false
+
+- name: Refuse to create the pool if the target is not empty
+  fail:
+    msg: >-
+      {{ zfs_data_device }} already contains data ({{ zfs_target_blkid.stdout }}).
+      Refusing to zpool create. Verify the partition/label before continuing.
+  when: zpool_check.rc != 0 and zfs_target_blkid.rc == 0
+
+- name: Create the ZFS pool on the empty partition (fresh machine only)
+  command: "zpool create {{ zfs_pool }} {{ zfs_data_device }}"
+  when: zpool_check.rc != 0 and zfs_target_blkid.rc != 0
+
+- name: Initial receive of course homes from the server (throttled, once)
+  shell: >
+    zfs send {{ zfs_pool_server }}/golden/home/{{ item }}@{{ golden_snapshot }}
+    | mbuffer -q -r {{ zfs_recv_rate }}
+    | ssh {{ inventory_hostname }} "zfs recv -F {{ zfs_pool }}/home/{{ item }}"
+  delegate_to: "{{ server_host }}"
+  args:
+    creates: "/{{ zfs_pool }}/home/{{ item }}"
+  loop: "{{ discipline_users }}"
+
+- name: Initial receive of the Windows emergency VM (throttled, once)
+  shell: >
+    zfs send {{ zfs_pool_server }}/golden/winvm@{{ golden_snapshot }}
+    | mbuffer -q -r {{ zfs_recv_rate }}
+    | ssh {{ inventory_hostname }} "zfs recv -F {{ zfs_pool }}/winvm"
+  delegate_to: "{{ server_host }}"
+  args:
+    creates: "/{{ zfs_pool }}/winvm"
+
+# TODO(harvest): confirm mountpoints so /home/<course> resolves to these datasets.

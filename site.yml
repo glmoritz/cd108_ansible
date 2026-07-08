@@ -1,0 +1,20 @@
+---
+# Normal converge. Safe to re-run. Does NOT reset homes (see reset-homes.yml).
+# Run against ONE test machine first:  ansible-playbook site.yml --limit pc-a-01
+- name: Professor's PC — student machine on steroids + infra hub
+  hosts: server
+  roles:
+    - common
+    - desktop
+    - sdr
+    - server        # nfs exchange folder + golden datasets live here
+
+- name: All lab machines
+  hosts: labs
+  roles:
+    - common
+    - desktop
+    - zfs           # build pool + initial receive of homes/winvm from server
+    - sdr
+    - matlab
+    - { role: freeipa, when: "inventory_hostname in groups['freeipa_members']" }

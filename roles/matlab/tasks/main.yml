@@ -1,0 +1,18 @@
+---
+# MATLAB is a campus NETWORK license (FlexLM) and the binaries are heavy, so
+# we mount them over NFS rather than installing per machine.
+
+- name: Mount MATLAB from the NFS server
+  ansible.posix.mount:
+    path: /opt/matlab
+    src: "{{ server_host }}:{{ nfs_exports.matlab }}"
+    fstype: nfs
+    opts: ro,soft,_netdev
+    state: mounted
+
+# TODO(harvest): confirm the on-disk license file path (network.lic / license.dat)
+- name: Point MATLAB at the campus license server
+  copy:
+    dest: /opt/matlab/licenses/network.lic
+    content: "{{ matlab_license_server }}\n"
+  # may need to be written to a per-machine path if the NFS export is read-only

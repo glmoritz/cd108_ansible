@@ -1,0 +1,22 @@
+---
+# Workstation UX. Firefox is the Ubuntu snap, which reads /etc/firefox/policies/.
+
+- name: Ensure Firefox policies dir exists
+  file: { path: /etc/firefox/policies, state: directory, mode: "0755" }
+
+- name: Deploy Firefox bookmark for the campus captive portal
+  copy:
+    dest: /etc/firefox/policies/policies.json
+    content: |
+      {
+        "policies": {
+          "ManagedBookmarks": [
+            { "name": "Campus captive portal", "url": "{{ captive_portal_url }}" }
+          ]
+        }
+      }
+
+# FUTURE (not on the image yet — design, don't harvest):
+#   dconf system-db lockdown so only root changes wallpaper/desktop settings.
+# TODO(harvest): enable VNC / desktop sharing (security-scoped)
+# TODO(harvest): the professor's "clipboard" automount — confirm what it is

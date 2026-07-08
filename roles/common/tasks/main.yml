@@ -1,0 +1,99 @@
+---
+# Applied to every machine. Package installs are real; a few OS tweaks remain
+# TODO(harvest) until we read the exact settings off the golden machine.
+
+# --- optional apt cache (only if you decide to run one; squid was dropped) ---
+- name: Route apt through the lab cache/proxy
+  copy:
+    dest: /etc/apt/apt.conf.d/01proxy
+    content: "Acquire::http::Proxy \"{{ apt_proxy_url }}\";\n"
+  when: apt_proxy_url is defined and apt_proxy_url | length > 0
+
+- name: Ensure apt keyrings dir exists
+  file: { path: /etc/apt/keyrings, state: directory, mode: "0755" }
+
+# --- base packages (plain apt) -------------------------------------------
+- name: Preseed wireshark to allow non-root capture
+  debconf:
+    name: wireshark-common
+    question: wireshark-common/install-setuid
+    vtype: boolean
+    value: "true"
+
+- name: Install common packages
+  apt:
+    name: "{{ common_packages }}"
+    state: present
+    update_cache: true
+
+# --- external repos (managed here so key/URL drift is a one-file fix) -----
+- name: Add VS Code repository key
+  get_url:
+    url: https://packages.microsoft.com/keys/microsoft.asc
+    dest: /etc/apt/keyrings/microsoft.asc
+    mode: "0644"
+
+- name: Add VS Code apt repository
+  apt_repository:
+    repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/microsoft.asc] https://packages.microsoft.com/repos/code stable main"
+    filename: vscode
+    state: present
+
+- name: Add Docker repository key
+  get_url:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    dest: /etc/apt/keyrings/docker.asc
+    mode: "0644"
+
+- name: Add Docker apt repository
+  apt_repository:
+    repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+    filename: docker
+    state: present
+
+- name: Install VS Code + Docker
+  apt:
+    name: [code, docker-ce, docker-ce-cli, containerd.io, docker-compose-plugin]
+    state: present
+    update_cache: true
+
+# --- users ----------------------------------------------------------------
+- name: Create one user per discipline (homes land on the ZFS datasets)
+  user:
+    name: "{{ item }}"
+    shell: /bin/bash
+    create_home: true
+  loop: "{{ discipline_users }}"
+
+- name: Let the `redes` account use docker without sudo
+  user: { name: redes, groups: docker, append: true }
+
+- name: Enable and start SSH
+  apt: { name: openssh-server, state: present }
+
+- name: Install the professor's public key for passwordless admin SSH
+  authorized_key:
+    user: "{{ admin_user | default('daelt') }}"
+    key: "{{ professor_ssh_pubkey }}"
+  when: professor_ssh_pubkey is defined
+
+# --- GRUB (headless, no grub-customizer) ---------------------------------
+- name: Configure GRUB defaults
+  lineinfile:
+    path: /etc/default/grub
+    regexp: "^{{ item.key }}="
+    line: "{{ item.key }}={{ item.value }}"
+  loop:
+    - { key: GRUB_TIMEOUT, value: "5" }
+    - { key: GRUB_TIMEOUT_STYLE, value: menu }
+  notify: update grub
+
+# --- system tweaks (fill exact values from harvest) ----------------------
+# TODO(harvest): hostname per-MAC — set from inventory var, declaratively
+# TODO(harvest): enable swap (watch the ZFS zvol case)
+# TODO(harvest): timedatectl set-local-rtc 1  (dual-boot clock — still needed?)
+# TODO(harvest): disable IPv6 privacy extensions (sysctl/netplan)
+# TODO(harvest): enable Wake-on-LAN, OS side (ethtool persist)
+# TODO(harvest): cron — shut down machines not logged into `daelt`
+# TODO(harvest): udev rule giving the practice UART kits a stable /dev symlink
+#   (get idVendor/idProduct via `udevadm info` on a plugged-in kit)

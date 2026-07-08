@@ -1,0 +1,10 @@
+---
+# Only runs on hosts in the `freeipa_members` group (see site.yml).
+# The join secret must come from Ansible Vault, never inline.
+
+# TODO(harvest): confirm domain, realm, server from an already-joined machine
+- name: Join FreeIPA domain
+  debug:
+    msg: >-
+      Use community.general.ipa_* or the ipa-client-install command with
+      vaulted freeipa_join_password. Capture domain/realm from a joined host.

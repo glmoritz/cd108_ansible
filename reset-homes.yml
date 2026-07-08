@@ -1,0 +1,27 @@
+---
+# DELIBERATE, DESTRUCTIVE home reset. NOT part of site.yml. Run by hand ~2-3x
+# per semester, after students have uploaded to the cloud:
+#
+#   ansible-playbook reset-homes.yml --limit lab_a        # one lab at a time
+#
+# Pushes a freshly-built golden home from the server onto each machine via the
+# prof->student SSH keys you already have. Receiving a clean golden (not a local
+# rollback) is what keeps vscode configs consistent.
+#
+# OPTIMISATION (since this runs several times a semester, not just at break):
+# if the student keeps the previously received golden snapshot, switch the send
+# to INCREMENTAL (`zfs send -i golden_prev golden_new`) so only the delta crosses
+# the wire — much faster than a full send each time. Full send is used below for
+# the first/clean case.
+- name: Reset course homes to the server golden
+  hosts: labs
+  serial: "{{ reset_serial | default('20%') }}"   # roll in waves, not all 50 at once
+  gather_facts: false
+  tasks:
+    - name: Snapshot then send each course golden home onto this machine (throttled)
+      shell: >
+        zfs send {{ zfs_pool_server }}/golden/home/{{ item }}@{{ golden_snapshot }}
+        | mbuffer -q -r {{ zfs_recv_rate }}
+        | ssh {{ inventory_hostname }} "zfs recv -F {{ zfs_pool }}/home/{{ item }}"
+      delegate_to: "{{ server_host }}"
+      loop: "{{ discipline_users }}"

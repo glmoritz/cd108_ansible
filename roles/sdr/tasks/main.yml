@@ -1,0 +1,82 @@
+---
+# SDR toolchain. Decision: build SDR++ ONCE on the server, distribute the
+# artifact to students. Libraries are installed on every machine (simplest
+# reliable way to satisfy the binary's shared-lib deps); only the compile and
+# the UHD image download happen on the server.
+
+- name: Add Ettus Research UHD PPA
+  apt_repository: { repo: "ppa:ettusresearch/uhd", state: present }
+
+- name: Install SDR libraries + tools (all machines)
+  apt:
+    name: "{{ sdr_packages }}"
+    state: present
+    update_cache: true
+
+- name: Blacklist the DVB driver so the RTL-SDR dongle is usable (all machines)
+  copy:
+    dest: /etc/modprobe.d/blacklist-rtl.conf
+    content: "blacklist dvb_usb_rtl28xxu\n"
+  notify: unload dvb_usb_rtl28xxu
+
+# ------------------- BUILDER (server): compile + package once -------------------
+- name: Build and package SDR++ on the server
+  when: inventory_hostname in groups['server']
+  block:
+    - name: Clone SDR++ source
+      git: { repo: "https://github.com/AlexandreRouma/SDRPlusPlus.git", dest: /usr/local/src/SDRPlusPlus }
+
+    - name: Compile and install SDR++ (once)
+      shell: |
+        cmake -B build -DOPT_BUILD_USRP_SOURCE=ON
+        cmake --build build -j"$(nproc)"
+        cmake --install build
+      args: { chdir: /usr/local/src/SDRPlusPlus, creates: /usr/local/bin/sdrpp }
+
+    - name: Download UHD FPGA/firmware images (once)
+      command: uhd_images_downloader
+      args: { creates: /usr/share/uhd/images }
+
+    - name: Clone LibreSDR firmware repo
+      git: { repo: "https://github.com/alphafox02/LibreSDR_USRP", dest: /usr/local/src/LibreSDR_USRP }
+
+    # Their script hardcoded /usr/share/uhd/4.9.0/images — breaks on UHD upgrade.
+    - name: Locate the UHD images directory (version-independent)
+      find: { paths: /usr/share/uhd, patterns: images, file_type: directory, recurse: true }
+      register: uhd_images
+
+    - name: Install the LibreSDR B200 firmware into the UHD images dir
+      copy:
+        src: /usr/local/src/LibreSDR_USRP/usrp_b200_fw.hex
+        dest: "{{ (uhd_images.files | map(attribute='path') | first) }}/usrp_b200_fw.hex"
+        remote_src: true
+      when: uhd_images.files | length > 0
+
+    - name: Ensure the distribution dir exists
+      file: { path: "{{ sdr_dist_dir }}", state: directory }
+
+    - name: Package the SDR++ artifact (binary + plugins + uhd images/firmware)
+      archive:
+        path:
+          - /usr/local/bin/sdrpp
+          - /usr/local/lib/sdrpp
+          - /usr/local/share/sdrpp
+          - /usr/share/uhd/images
+        dest: "{{ sdr_dist_dir }}/sdrpp-dist.tar.gz"
+
+# ------------------ CLIENTS (labs): receive the prebuilt artifact ------------------
+- name: Distribute + unpack the prebuilt SDR++ artifact
+  when: inventory_hostname not in groups['server']
+  block:
+    - name: Push the SDR++ artifact from the server (uses prof->student rsync)
+      synchronize:
+        src: "{{ sdr_dist_dir }}/sdrpp-dist.tar.gz"
+        dest: /tmp/sdrpp-dist.tar.gz
+        mode: push
+      delegate_to: "{{ server_host }}"
+
+    - name: Unpack the SDR++ artifact into place
+      unarchive:
+        src: /tmp/sdrpp-dist.tar.gz
+        dest: /
+        remote_src: true

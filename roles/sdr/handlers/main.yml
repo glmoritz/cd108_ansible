@@ -1,0 +1,5 @@
+---
+- name: unload dvb_usb_rtl28xxu
+  community.general.modprobe:
+    name: dvb_usb_rtl28xxu
+    state: absent
