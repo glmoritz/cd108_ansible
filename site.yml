@@ -1,21 +1,23 @@
 ---
 # Normal converge. Safe to re-run. Does NOT reset homes (see reset-homes.yml).
-# Run against ONE test machine first:  ansible-playbook site.yml --limit pc-a-01
-- name: Professor's PC — student machine on steroids + infra hub
+# Always dry-run ONE machine first:
+#   ansible-playbook site.yml --limit cd108-test-01 --check --diff --ask-vault-pass
+# Roles are tagged so you can converge incrementally, e.g. --tags common,zfs
+- name: Server — infra hub (student machine on steroids)
   hosts: server
   roles:
-    - common
-    - desktop
-    - sdr
-    - server        # nfs exchange folder + golden datasets live here
+    - { role: common,  tags: common }
+    - { role: desktop, tags: desktop }
+    - { role: sdr,     tags: sdr }
+    - { role: server,  tags: server }   # apt-cache, NFS troca, golden ZFS store
 
 - name: All lab machines
   hosts: labs
   roles:
-    - common
-    - desktop
-    - zfs           # build pool + initial receive of homes/windows from server
-    - winvm         # emergency Windows VM: revert wiring + launcher (needs ssdpool/windows)
-    - sdr
-    - matlab
-    - { role: freeipa, when: "inventory_hostname in groups['freeipa_members']" }
+    - { role: common,  tags: common }
+    - { role: desktop, tags: desktop }
+    - { role: zfs,     tags: zfs }      # build pool + receive homes/windows from server
+    - { role: winvm,   tags: winvm }    # Windows VM: revert wiring + launcher (needs ssdpool/windows)
+    - { role: sdr,     tags: sdr }
+    - { role: matlab,  tags: matlab }
+    - { role: freeipa, tags: freeipa, when: "inventory_hostname in groups['freeipa_members']" }
