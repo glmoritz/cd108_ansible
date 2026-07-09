@@ -3,3 +3,7 @@
 harvest_out/
 .vault_pass
 inventory/group_vars/**/vault.yml.plain
+
+# Python bytecode
+__pycache__/
+*.pyc
