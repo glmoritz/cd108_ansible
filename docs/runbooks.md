@@ -221,18 +221,19 @@ generalize its identity so clones aren't twins. That's its own checklist —
 Then, in Clonezilla:
 
 1. Boot the (already-generalized) reference machine into Clonezilla.
-2. `device-image` → **`savedisk`** in **expert mode**, and **deselect the `zfs`
-   partition** (`sda4`) from the partitions to save. Clonezilla keeps the whole
-   partition table (so the `zfs` partlabel survives) but images only the EFI +
-   ext4 system → on restore the `zfs` partition comes back **empty and labelled**.
-   The homes/Windows VM are received separately by the `zfs` role, not by
-   Clonezilla.
-3. Save the image to the server (SSH/NFS) so restores can pull it from there.
+2. `device-image` → mount the NFS repo (`103.0.1.16:/mnt/ssdpool/cd108_images`) →
+   **Expert** → **`saveparts`**, selecting **only the EFI/ESP + ext4 root**
+   partitions and leaving the `zfs`/`ssdpool` partition **unticked**. Clonezilla
+   still records the disk's partition table, so on restore the `zfs` partition
+   comes back **empty and labelled**. The homes/Windows VM are received separately
+   by the `zfs` role, not by Clonezilla.
+3. The image lands on the NFS repo so restores can pull it from there.
 
-> Confirm the exact partition numbers against your golden's `lsblk` before
-> selecting — the principle (system partitions in the image, `zfs` partition
-> out and empty) is what matters. Full details and the non-destructive rationale:
-> [`golden-image-prep.md`](golden-image-prep.md).
+> Confirm the partitions against the golden's `lsblk` before ticking — the
+> principle (system partitions in the image, `zfs` partition out and empty) is
+> what matters. Full details, the operator-facing capture guide, and the
+> non-destructive rationale: [`golden-image-prep.md`](golden-image-prep.md) and
+> [`clonezilla-capture-for-operator.md`](clonezilla-capture-for-operator.md).
 
 ### Automating it (unattended USB → recovery partition → PXE)
 

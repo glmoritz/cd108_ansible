@@ -20,33 +20,57 @@ anything about the project — just follow the steps.
   | Shared folder | `/mnt/ssdpool/cd108_images` |
   | Image name to type | `cd108-golden-ubuntu2404-<date>` (no spaces, e.g. `cd108-golden-ubuntu2404-20260710`) |
 
+## What goes in the image (important)
+
+Capture **only the system partitions** (the EFI/ESP + the ext4 Ubuntu root).
+**Skip the data partition** — the one whose partition label is **`zfs`** /
+filesystem label **`ssdpool`**. That partition holds the course homes and a
+Windows VM which are distributed separately (via Ansible `zfs recv`), so they must
+**not** be in the image — the clones must get an empty, labelled `zfs` partition.
+That's why this uses **`saveparts`**, not `savedisk`.
+
 ## Steps
 
 1. Insert the Clonezilla USB and power on. Open the **boot menu** (tap `F12`,
    `F10`, `Esc`, or `F9` at power-on — varies by PC) and pick the **USB stick**.
-2. At the Clonezilla screen, take the default **"Clonezilla live"** and let it
-   boot. Choose **English**, keep the default keyboard, then **Start Clonezilla**.
-3. Choose **`device-image`** (work with disks/partitions using an image).
-4. Point it at the network share — choose **`nfs_server`** → **`NFSv3`** →
-   set up networking by **`dhcp`** → server IP **`103.0.1.16`** → directory
-   **`/mnt/ssdpool/cd108_images`**. It mounts the share and prints the free space
-   (there's plenty). *If it errors here, see Troubleshooting.*
-5. Choose **`Beginner`** mode.
-6. Choose **`savedisk`** (save the whole internal disk to an image).
-7. **Image name:** type **`cd108-golden-ubuntu2404-<date>`** (use today's date).
-8. **Source disk:** pick the PC's **internal disk** — usually **`sda`** or
-   **`nvme0n1`**, the big one (hundreds of GB). **Not** the Clonezilla USB.
-9. Accept the defaults for the rest (skip filesystem check; default compression).
-   When it asks to proceed, type **`y`** / Enter. It now writes the image to the
-   share — this is the long part.
-10. When it says **"finished successfully"**, choose **Power off**. Remove the USB.
-    Leave the PC off and hand it back. **Do not boot its Ubuntu.**
+2. Take the default **"Clonezilla live"** and let it boot. Choose **English**,
+   keep the default keyboard, then **Start Clonezilla**.
+3. **Confirm the layout first.** Drop to a shell (option *"Enter command line
+   prompt"* → `2` for a shell, or `Ctrl-Alt-F2`) and run:
+   ```
+   lsblk -o NAME,SIZE,FSTYPE,LABEL,PARTLABEL
+   ```
+   Note the internal disk (e.g. `sda` / `nvme0n1`) and which partitions are the
+   **EFI (vfat/ESP)** and **ext4 root** vs the data one labelled **`zfs` /
+   `ssdpool`**. Type `exit` / `ocs-live` (or `Ctrl-Alt-F1`) to return to the menu.
+4. Choose **`device-image`**.
+5. Point it at the share — **`nfs_server`** → **`NFSv3`** → networking by
+   **`dhcp`** → server **`103.0.1.16`** → directory **`/mnt/ssdpool/cd108_images`**.
+   It mounts and prints free space (plenty). *If it errors, see Troubleshooting.*
+6. Choose **`Expert`** mode.
+7. Choose **`saveparts`** (save selected partitions, not the whole disk).
+8. **Image name:** **`cd108-golden-ubuntu2404-<date>`** (today's date, no spaces).
+9. **Select partitions:** tick **only the EFI + ext4 root** partitions you
+   identified in step 3. **Leave the `zfs`/`ssdpool` partition unticked.**
+10. Extra parameters: accept the defaults (Clonezilla also records the disk's
+    partition table alongside the image — keep that). Compression default is fine.
+    Confirm **`y`** to proceed; it writes to the share (the long part).
+11. On **"finished successfully"**, choose **Power off**, remove the USB, leave
+    the PC off and hand it back. **Do not boot its Ubuntu.**
 
 ## How to know it worked
 
-The final screen says whether it succeeded — you want **"finished successfully"**
-with **no red error lines**. The image is saved as a folder named
-`cd108-golden-ubuntu2404-<date>` on the share.
+The final screen must say **"finished successfully"** with **no red errors**. On
+the share you'll get a folder `cd108-golden-ubuntu2404-<date>` containing the two
+system-partition images **and** the disk's partition-table files (`*-pt.sf`,
+`*-gpt.*`, `*-mbr`) — those let the restore recreate the full layout, including
+the empty labelled `zfs` partition. If the folder has the `zfs`/`ssdpool`
+partition image in it, the wrong partition was ticked — redo step 9.
+
+> Simplest fallback if `saveparts` gives you trouble: use **`savedisk`** (whole
+> disk) instead. It just works but the image is much larger (it includes the
+> homes + Windows VM) — fine for a quick test, not ideal long-term. Tell
+> Guilherme if you fall back to this.
 
 ## Troubleshooting
 
@@ -61,5 +85,4 @@ with **no red error lines**. The image is saved as a folder named
 - **Anything red, or you're unsure:** stop and send a **photo of the screen** to
   Guilherme before continuing.
 
-*Note: this captures the whole disk. That's intentional and safe — nothing on the
-machine is modified, only read.*
+*Note: capturing only reads the disk — nothing on the machine is modified.*

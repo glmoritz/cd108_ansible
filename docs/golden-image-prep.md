@@ -58,31 +58,33 @@ those files; re-run the sysprep right before you actually capture.)
 ## Step 3 — power off and boot Clonezilla
 
 Power off, insert the Clonezilla Live USB, boot from it, choose
-`device-image` → `savedisk`, and store the image on the cd108 NFS
-(`.../images`) so re-imaging can pull it from the network.
+`device-image`, mount the cd108 NFS repo
+(`103.0.1.16:/mnt/ssdpool/cd108_images`) so re-imaging can pull it from the
+network, and capture with **`saveparts`** (see below).
 
 ### Leave the `zfs` partition empty in the image
 
-The golden's `zfs` partition (`sda4`, pool `ssdpool`) is **full** of the golden
-homes and the Windows VM — but the image must ship that partition **empty**
-(clones build the pool and receive homes via Ansible). So you do **not** want to
-copy `sda4`'s contents. Use Clonezilla's **expert mode** on `savedisk` and
-**deselect `sda4`** from the list of partitions to save:
+The golden's `zfs` partition (partlabel `zfs`, pool `ssdpool`) is **full** of the
+golden homes and the Windows VM — but the image must ship that partition **empty**
+(clones build the pool and receive homes via Ansible). So you must **not** copy
+that partition's contents. `savedisk` images the *whole* disk with no clean way to
+drop a partition, so instead use **`saveparts`** (Expert mode) and select **only
+the EFI/ESP + ext4 root** partitions — leave the `zfs`/`ssdpool` partition
+**unticked**:
 
-- Clonezilla still writes the whole **partition table** (so the `zfs` partlabel
-  and the partition's size/position are preserved), and images `sda1–sda3` (the
-  ESP/boot + ext4 system).
-- On restore, `sda4` is recreated from the table but its content is **not**
-  written → an empty, labelled `zfs` partition. Exactly what
-  [`imaging-automation.md`](imaging-automation.md) and the `zfs` role expect.
-- Bonus: the image stays small (system only), so it moves fast over NFS and
-  multicast.
+- Clonezilla still records the disk's **partition table** (`*-pt.sf`, `*-gpt.*`)
+  alongside the partition images, so the `zfs` partlabel and layout are preserved.
+- On restore you lay that table (empty `zfs` partition included) then
+  `restoreparts` the system partitions → an empty, labelled `zfs` partition.
+  Exactly what [`imaging-automation.md`](imaging-automation.md) and the `zfs` role
+  expect.
+- The image stays small (system only), so it moves fast over NFS and multicast.
 
-> This is **non-destructive** to the golden — its live `ssdpool` is untouched, so
-> the golden keeps working. (Alternative, if you'd rather capture a whole disk
-> plainly: `sudo zpool destroy ssdpool` on the golden first — the homes are safe
-> on the server — then `savedisk` the whole disk. Only do this if you're done
-> using this machine as the golden.)
+This is **non-destructive** to the golden — its live `ssdpool` is untouched.
+(Fallback if `saveparts` gives trouble: `savedisk` the whole disk — foolproof but
+a much larger image that includes the homes/Windows VM. Fine for a quick test.)
+The operator-facing version of this is
+[`clonezilla-capture-for-operator.md`](clonezilla-capture-for-operator.md).
 
 ## Step 4 — verify the image restores clean
 
