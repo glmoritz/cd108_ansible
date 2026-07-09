@@ -10,25 +10,47 @@ from "works next week" to "fully hands-off".
 Clonezilla Live reads **boot-time parameters** that let it run fully unattended
 (batch mode, no prompts). The two that matter:
 
-- **`ocs_prerun`** — a command run before imaging, used to mount the image repo
-  from NFS. Clonezilla restores from `/home/partimag`:
+- **`ocs_prerun`** — commands run *before* imaging. We use it for two things:
+  mount the image repo from NFS, **and partition the target disk sized to itself**
+  (this is what makes any SSD size work — see below). Clonezilla restores from
+  `/home/partimag`:
   ```
-  ocs_prerun="mount -t nfs cd108.tutu.eng.br:/srv/nfs/images /home/partimag"
+  ocs_prerun1="mount -t nfs 103.0.1.16:/mnt/ssdpool/cd108_images /home/partimag"
+  ocs_prerun2="/home/partimag/layout-disk.sh"   # sgdisk: ESP + ext4 + zfs=rest
   ```
-- **`ocs_live_run`** — the batch restore command. `-batch` means no questions:
+- **`ocs_live_run`** — the batch restore. `-batch` = no questions. Because the
+  image is *system partitions only*, we `restoreparts` (not `restoredisk`), and
+  `-r` resizes the restored ext4 to its partition:
   ```
-  ocs_live_run="ocs-sr -batch -r -j2 -p reboot restoredisk <image-name> <disk>"
+  ocs_live_run="ocs-sr -batch -r -j2 -p reboot restoreparts <image> <esp> <root>"
   ```
 
 Set the boot menu to auto-select that entry with a short timeout and you get:
 insert media → power on → walk away → disk is repartitioned and restored →
 reboot. **Zero keypresses.**
 
-> Use **`restoredisk`** (whole disk), not `restoreparts` — it lays down the whole
-> partition table, *including the empty labelled `zfs` partition*. That's your
-> "prepares the disks". The image stays small because the homes and Windows VM
-> aren't in it (they come later via `zfs recv`). Ansible builds ZFS on the empty
-> partition on first converge.
+### Why partition at restore instead of replaying the golden's table
+
+The lab SSDs are **different sizes**, so we must **not** bake the golden's disk
+geometry into the image. The image is `saveparts` of the **EFI + ext4 root** only
+— no `zfs` partition, no fixed whole-disk table. Each target gets a *fresh* table
+sized to its own disk, with the `zfs` partition taking **whatever is left**:
+
+```bash
+# layout-disk.sh — runs in ocs_prerun, sizes the zfs partition to THIS disk
+DISK=/dev/sda                       # detect the internal disk at runtime
+sgdisk --zap-all "$DISK"
+sgdisk -n1:0:+1G   -t1:ef00 -c1:ESP  "$DISK"   # EFI system partition
+sgdisk -n2:0:+120G -t2:8300 -c2:root "$DISK"   # ext4 root (fixed, > used size)
+sgdisk -n3:0:0     -t3:bf00 -c3:zfs  "$DISK"   # ZFS = ALL remaining space
+```
+
+`restoreparts` then writes the ESP + ext4 images into `p1`/`p2` (partclone stores
+only *used* blocks, `-r` grows the ext4 fs to the 120 G partition). Partition `p3`
+is left empty but **labelled `zfs`**, so `/dev/disk/by-partlabel/zfs` resolves and
+Ansible's `zpool create` fills it — 256 GB SSD → ~130 G pool, 2 TB → ~1.8 T pool,
+**same image**. This is ZFS's "use the whole disk" doing the size-adaptation for
+us; the homes and Windows VM arrive afterward via `zfs recv`.
 
 You don't have to hand-edit bootloaders: Clonezilla can **generate** a custom
 unattended restore device for you with **`ocs-iso`** / **`ocs-live-dev`** (it even
@@ -40,7 +62,8 @@ bakes in the image name, target disk, NFS prerun, and batch flags.
 Build one Clonezilla USB (via `ocs-iso`) that auto-restores the cd108 image from
 NFS. To re-image a machine: plug it in, boot from USB, walk away. Good enough for
 a handful of machines and for the shakeout test. **No Ansible change needed** —
-the machine just needs the image on NFS and its disk laid out by `restoredisk`.
+the machine just needs the image on NFS and its disk laid out by the `ocs_prerun`
+partitioning step (ESP + ext4 + `zfs`=rest), then `restoreparts`.
 
 ## Stage 2 — recovery partition on the disk (your idea — no USB)
 
@@ -77,18 +100,21 @@ rebuilds, the recovery partition for one-off remote re-images.
 ```
  unattended Clonezilla (USB / recovery part / PXE)     Ansible (site.yml)
  ─────────────────────────────────────────────────     ──────────────────────
- restoredisk from NFS:                                  on first boot:
-   • ext4 Ubuntu system partition                         • build ssdpool on the
-   • empty, labelled `zfs` partition                        empty zfs partition
-   • (homes/windows NOT in the image)                      • zfs recv homes + winvm
-                                                           • apply config
+ ocs_prerun: partition THIS disk to fit +              on first boot:
+             mount images over NFS                       • build ssdpool on the
+ restoreparts from NFS:                                     zfs=rest partition
+   • ESP + ext4 root (system only)                       • zfs recv homes + winvm
+   • zfs partition = rest of disk, empty+labelled        • apply config
+   • (homes/windows NOT in the image)
 ```
 
 So "an image that prepares the disks mounting from cd108 NFS with minimal
-intervention" = an unattended `restoredisk` sourcing the image over NFS. Nothing
-exotic — it's the standard Clonezilla mass-deployment workflow, and the
-recovery-partition variant makes it remotely triggerable without a flash drive.
+intervention" = **partition the disk to its own size** (`ocs_prerun`) then an
+unattended `restoreparts` of the system partitions over NFS. Nothing exotic — it's
+the standard Clonezilla mass-deployment workflow, and sizing the `zfs` partition
+per-disk is what lets **one image fit every SSD**. The recovery-partition variant
+makes it remotely triggerable without a flash drive.
 
 **Not built yet** — this is the roadmap. Prerequisite for all three: the image
-lives on the server's NFS and the server is reachable from the lab LAN (i.e.
-bridge the server VM first).
+lives on the NFS repo (`103.0.1.16:/mnt/ssdpool/cd108_images` today) and that repo
+is reachable from the lab LAN.

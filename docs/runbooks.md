@@ -196,15 +196,26 @@ Keep the master image small by excluding the ZFS data partition.
 1. **Boot the target into Clonezilla** — from a Clonezilla Live USB (make one
    once: download `clonezilla-live-*.iso`, `dd` it to a USB stick), press the
    boot-menu key (often F12), pick the USB.
-2. Choose **`device-image`**, then the image **source**: the server over
-   **SSH/NFS** (the images live on the server's `vdb`), or a local USB with the
-   image on it.
-3. **`restoreparts`** the ext4 system partition(s) onto the target's disk. Do
-   **not** overwrite the `zfs`-labelled data partition unless you intend to wipe
-   local homes — Ansible will (re)build the pool either way.
-4. Reboot. The machine comes up carrying the golden's hostname; it's reachable
+2. Choose **`device-image`**, then the image **source**: the NFS repo
+   (`103.0.1.16:/mnt/ssdpool/cd108_images`), or a local USB with the image on it.
+3. **Partition to fit this disk (only if it's blank or a different size than the
+   golden).** The image is system-partitions-only, so lay a fresh table sized to
+   the target — ESP + ext4 root + a `zfs` partition filling **the rest** — so any
+   SSD size works and ZFS uses whatever's left:
+   ```bash
+   DISK=/dev/sda
+   sgdisk --zap-all "$DISK"
+   sgdisk -n1:0:+1G   -t1:ef00 -c1:ESP  "$DISK"
+   sgdisk -n2:0:+120G -t2:8300 -c2:root "$DISK"
+   sgdisk -n3:0:0     -t3:bf00 -c3:zfs  "$DISK"   # zfs = all remaining space
+   ```
+   Re-imaging a machine that already has this layout? Skip this — just reuse it.
+4. **`restoreparts`** the ESP + ext4 system partitions onto the target (add `-r`
+   so the ext4 fs grows to its partition). Do **not** write the `zfs` partition —
+   it stays empty+labelled and Ansible (re)builds the pool on it.
+5. Reboot. The machine comes up carrying the golden's hostname; it's reachable
    by its MAC-derived IPv6 (see [architecture → Addressing](architecture.md#addressing--no-fixed-ips-no-registry)).
-5. Make sure it's in `inventory/hosts.yml` (see [Add a lab
+6. Make sure it's in `inventory/hosts.yml` (see [Add a lab
    machine](#add-a-lab-machine)), then converge it — this sets its real
    hostname, builds ZFS, and receives homes:
    ```bash

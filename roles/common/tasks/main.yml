@@ -124,6 +124,7 @@
     user: "{{ admin_user | default('daelt') }}"
     key: "{{ professor_ssh_pubkey }}"
   when: professor_ssh_pubkey is defined
+  tags: deploykey
 
 # --- image-owned deploy key (survives BOTH a home reset and a fresh image) --
 # The key above lands in ~daelt/.ssh/authorized_keys, which lives on the ZFS
@@ -135,6 +136,7 @@
 # chicken-egg (see docs/first-lab-test.md).
 - name: Ensure the image-owned authorized_keys dir exists
   file: { path: /etc/ssh/authorized_keys.d, state: directory, mode: "0755" }
+  tags: deploykey
 
 - name: Bake the deploy key into the image-owned location
   copy:
@@ -144,6 +146,7 @@
     group: root
     mode: "0644"
   when: professor_ssh_pubkey is defined
+  tags: deploykey
 
 - name: Point sshd at the image-owned keys too (in addition to ~/.ssh)
   copy:
@@ -154,6 +157,7 @@
       AuthorizedKeysFile .ssh/authorized_keys /etc/ssh/authorized_keys.d/%u
     mode: "0644"
   notify: reload sshd
+  tags: deploykey
 
 # --- hostname (declarative, replaces the golden's set-hostname-from-mac.sh) -
 # Name the host in inventory and Ansible applies it — no boot-time MAC script.

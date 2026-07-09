@@ -63,9 +63,9 @@ That's why this uses **`saveparts`**, not `savedisk`.
 The final screen must say **"finished successfully"** with **no red errors**. On
 the share you'll get a folder `cd108-golden-ubuntu2404-<date>` containing the two
 system-partition images **and** the disk's partition-table files (`*-pt.sf`,
-`*-gpt.*`, `*-mbr`) — those let the restore recreate the full layout, including
-the empty labelled `zfs` partition. If the folder has the `zfs`/`ssdpool`
-partition image in it, the wrong partition was ticked — redo step 9.
+`*-gpt.*`, `*-mbr`) — kept as a reference for restores. If the folder contains an
+image of the `zfs`/`ssdpool` partition, the wrong partition was ticked — redo
+step 9 (that partition must **not** be in the image).
 
 > Simplest fallback if `saveparts` gives you trouble: use **`savedisk`** (whole
 > disk) instead. It just works but the image is much larger (it includes the
