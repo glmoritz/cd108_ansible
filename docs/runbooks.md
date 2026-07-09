@@ -199,20 +199,23 @@ Keep the master image small by excluding the ZFS data partition.
 2. Choose **`device-image`**, then the image **source**: the NFS repo
    (`103.0.1.16:/mnt/ssdpool/cd108_images`), or a local USB with the image on it.
 3. **Partition to fit this disk (only if it's blank or a different size than the
-   golden).** The image is system-partitions-only, so lay a fresh table sized to
-   the target — ESP + ext4 root + a `zfs` partition filling **the rest** — so any
-   SSD size works and ZFS uses whatever's left:
+   golden).** The image is system-partitions-only, so lay a fresh table with a
+   fixed head and the `zfs` partition **last**, filling the rest:
    ```bash
    DISK=/dev/sda
    sgdisk --zap-all "$DISK"
-   sgdisk -n1:0:+1G   -t1:ef00 -c1:ESP  "$DISK"
-   sgdisk -n2:0:+120G -t2:8300 -c2:root "$DISK"
-   sgdisk -n3:0:0     -t3:bf00 -c3:zfs  "$DISK"   # zfs = all remaining space
+   sgdisk -n1:0:+100M -t1:ef00 -c1:ESP      "$DISK"   # EFI (exact golden size)
+   sgdisk -n2:0:+190G -t2:8300 -c2:root     "$DISK"   # ext4 root (golden's size)
+   sgdisk -n3:0:+4G   -t3:0700 -c3:recovery "$DISK"   # Clonezilla recovery
+   sgdisk -n4:0:0     -t4:bf00 -c4:zfs      "$DISK"   # zfs = all remaining space
    ```
-   Re-imaging a machine that already has this layout? Skip this — just reuse it.
-4. **`restoreparts`** the ESP + ext4 system partitions onto the target (add `-r`
-   so the ext4 fs grows to its partition). Do **not** write the `zfs` partition —
-   it stays empty+labelled and Ansible (re)builds the pool on it.
+   Needs a disk ≥ ~210 GB. Re-imaging a machine that already has this layout?
+   Skip this — just reuse it.
+4. **`restoreparts`** the ESP + ext4 root + recovery partitions onto the target.
+   Do **not** write the `zfs` partition — it stays empty+labelled and Ansible
+   (re)builds the pool on it. It boots with no GRUB/EFI surgery: `fstab` and the
+   ESP grub stub are UUID-based (`partclone` preserves UUIDs) and the ESP carries
+   the removable `\EFI\Boot\bootx64.efi` fallback (boots with empty NVRAM).
 5. Reboot. The machine comes up carrying the golden's hostname; it's reachable
    by its MAC-derived IPv6 (see [architecture → Addressing](architecture.md#addressing--no-fixed-ips-no-registry)).
 6. Make sure it's in `inventory/hosts.yml` (see [Add a lab

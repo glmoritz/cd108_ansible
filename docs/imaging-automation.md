@@ -32,25 +32,37 @@ reboot. **Zero keypresses.**
 ### Why partition at restore instead of replaying the golden's table
 
 The lab SSDs are **different sizes**, so we must **not** bake the golden's disk
-geometry into the image. The image is `saveparts` of the **EFI + ext4 root** only
-— no `zfs` partition, no fixed whole-disk table. Each target gets a *fresh* table
-sized to its own disk, with the `zfs` partition taking **whatever is left**:
+geometry into the image. The image is `saveparts` of the **EFI + ext4 root +
+recovery** partitions only — no `zfs` partition. Each target gets a *fresh* table
+with a fixed head and the `zfs` partition (always **last**) taking whatever is
+left:
 
 ```bash
 # layout-disk.sh — runs in ocs_prerun, sizes the zfs partition to THIS disk
 DISK=/dev/sda                       # detect the internal disk at runtime
 sgdisk --zap-all "$DISK"
-sgdisk -n1:0:+1G   -t1:ef00 -c1:ESP  "$DISK"   # EFI system partition
-sgdisk -n2:0:+120G -t2:8300 -c2:root "$DISK"   # ext4 root (fixed, > used size)
-sgdisk -n3:0:0     -t3:bf00 -c3:zfs  "$DISK"   # ZFS = ALL remaining space
+sgdisk -n1:0:+100M -t1:ef00 -c1:ESP      "$DISK"   # EFI (exact golden size)
+sgdisk -n2:0:+190G -t2:8300 -c2:root     "$DISK"   # ext4 root (golden's size)
+sgdisk -n3:0:+4G   -t3:0700 -c3:recovery "$DISK"   # Clonezilla recovery slot
+sgdisk -n4:0:0     -t4:bf00 -c4:zfs      "$DISK"   # ZFS = ALL remaining space
 ```
 
-`restoreparts` then writes the ESP + ext4 images into `p1`/`p2` (partclone stores
-only *used* blocks, `-r` grows the ext4 fs to the 120 G partition). Partition `p3`
-is left empty but **labelled `zfs`**, so `/dev/disk/by-partlabel/zfs` resolves and
-Ansible's `zpool create` fills it — 256 GB SSD → ~130 G pool, 2 TB → ~1.8 T pool,
+`restoreparts` writes the ESP, ext4 root, and recovery images into `p1`–`p3`
+(ext4 restores at its exact size — no shrink). Partition `p4` is left empty but
+**labelled `zfs`**, so `/dev/disk/by-partlabel/zfs` resolves and Ansible's
+`zpool create` fills it — a 256 GB SSD → ~60 GB pool, a 1 TB → ~800 GB pool,
 **same image**. This is ZFS's "use the whole disk" doing the size-adaptation for
 us; the homes and Windows VM arrive afterward via `zfs recv`.
+
+**Why this boots with zero GRUB/EFI surgery** (confirmed on the golden): the
+Ubuntu `fstab` and the ESP's GRUB stub both find root by **filesystem UUID**
+(`search.fs_uuid …`), which `partclone` preserves on restore — so recreating the
+table and renumbering partitions is safe. And the ESP already carries the
+**removable-media fallback** `\EFI\Boot\bootx64.efi` (shim), which firmware boots
+with an **empty EFI NVRAM** — no `efibootmgr`, no `grub-install`, no `update-grub`.
+Because ext4 keeps the golden's size, the head is byte-identical everywhere and
+only the trailing `zfs` partition varies. That's the whole trick to a painless
+restore. (Cost: every target disk must be ≥ ~210 GB.)
 
 You don't have to hand-edit bootloaders: Clonezilla can **generate** a custom
 unattended restore device for you with **`ocs-iso`** / **`ocs-live-dev`** (it even
@@ -103,7 +115,7 @@ rebuilds, the recovery partition for one-off remote re-images.
  ocs_prerun: partition THIS disk to fit +              on first boot:
              mount images over NFS                       • build ssdpool on the
  restoreparts from NFS:                                     zfs=rest partition
-   • ESP + ext4 root (system only)                       • zfs recv homes + winvm
+   • ESP + ext4 root + recovery                          • zfs recv homes + winvm
    • zfs partition = rest of disk, empty+labelled        • apply config
    • (homes/windows NOT in the image)
 ```

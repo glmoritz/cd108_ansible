@@ -62,28 +62,44 @@ Power off, insert the Clonezilla Live USB, boot from it, choose
 (`103.0.1.16:/mnt/ssdpool/cd108_images`) so re-imaging can pull it from the
 network, and capture with **`saveparts`** (see below).
 
-### Leave the `zfs` partition empty in the image
+### The locked capture layout (decided 2026-07)
 
-The golden's `zfs` partition (partlabel `zfs`, pool `ssdpool`) is **full** of the
-golden homes and the Windows VM — but the image must ship that partition **empty**
-(clones build the pool and receive homes via Ansible). So you must **not** copy
-that partition's contents. `savedisk` images the *whole* disk with no clean way to
-drop a partition, so instead use **`saveparts`** (Expert mode) and select **only
-the EFI/ESP + ext4 root** partitions — leave the `zfs`/`ssdpool` partition
-**unticked**:
+`savedisk` images the *whole* disk with no clean way to drop a partition, so use
+**`saveparts`** (Expert mode) and capture exactly **three** partitions, leaving
+the ZFS data partition out. On the golden (`sda`, 477 GB):
 
-- Clonezilla still records the disk's **partition table** (`*-pt.sf`, `*-gpt.*`)
-  alongside the partition images, so the `zfs` partlabel and layout are preserved.
-- On restore you lay that table (empty `zfs` partition included) then
-  `restoreparts` the system partitions → an empty, labelled `zfs` partition.
-  Exactly what [`imaging-automation.md`](imaging-automation.md) and the `zfs` role
-  expect.
-- The image stays small (system only), so it moves fast over NFS and multicast.
+| Capture | Part | What |
+|---|---|---|
+| ✅ | `sda1` | EFI/ESP (vfat, 100 MB) |
+| ✅ | `sda3` | ext4 root (Ubuntu, ~190 GB, 63 GB used) |
+| ✅ | `sda7` | `clonezilla` recovery slot (vfat, 4 GB) |
+| ❌ | `sda4` | `ssdpool`/`zfs` data — **must not** be in the image |
+| ❌ | `sda2` | 16 MB Microsoft-reserved — not needed |
 
 This is **non-destructive** to the golden — its live `ssdpool` is untouched.
-(Fallback if `saveparts` gives trouble: `savedisk` the whole disk — foolproof but
-a much larger image that includes the homes/Windows VM. Fine for a quick test.)
-The operator-facing version of this is
+
+### How clones are partitioned (and why it boots with no GRUB pain)
+
+The `zfs` partition is **not** in the image; each target is repartitioned at
+restore, with `zfs` **last** so it fills the disk. **ext4 keeps the golden's
+190 GB** (exact restore, no shrink), so the head is identical everywhere and only
+the `zfs` tail varies:
+
+```bash
+DISK=/dev/sda
+sgdisk --zap-all "$DISK"
+sgdisk -n1:0:+100M -t1:ef00 -c1:ESP      "$DISK"
+sgdisk -n2:0:+190G -t2:8300 -c2:root     "$DISK"
+sgdisk -n3:0:+4G   -t3:0700 -c3:recovery "$DISK"
+sgdisk -n4:0:0     -t4:bf00 -c4:zfs      "$DISK"   # zfs = all remaining (≥ ~210 GB disk)
+```
+
+`restoreparts` writes ESP/root/recovery into `p1`–`p3`; Ansible builds `ssdpool`
+on the empty labelled `p4`. **No GRUB/EFI surgery needed** — verified on the
+golden: `fstab` and the ESP grub stub both resolve root by **fs-UUID** (which
+`partclone` preserves), and the ESP already has the removable `\EFI\Boot\bootx64.efi`
+fallback, so clones boot with an empty EFI NVRAM. Full roadmap:
+[`imaging-automation.md`](imaging-automation.md); operator steps:
 [`clonezilla-capture-for-operator.md`](clonezilla-capture-for-operator.md).
 
 ## Step 4 — verify the image restores clean
@@ -92,7 +108,7 @@ On the **first machine** you re-image from it (the shakeout —
 [`first-lab-test.md`](first-lab-test.md)):
 
 ```bash
-lsblk -o NAME,SIZE,LABEL,PARTLABEL           # sda4 present, labelled zfs, empty
+lsblk -o NAME,SIZE,LABEL,PARTLABEL           # p4 present, partlabel zfs, empty
 cat /etc/machine-id                          # non-empty, and DIFFERENT per clone
 ls /etc/ssh/ssh_host_*                       # regenerated (fresh mtime)
 sudo cat /etc/ssh/authorized_keys.d/daelt    # deploy key present
@@ -108,5 +124,6 @@ that's the whole point of the image-owned key.
 - [ ] `common` converged on the golden (image-owned key present)
 - [ ] `prepare-golden-image.yml -e capture_now=true` run
 - [ ] powered off **without** rebooting the OS
-- [ ] Clonezilla `savedisk`, **`sda4` deselected**, stored on cd108 NFS
+- [ ] Clonezilla `saveparts` of **`sda1` + `sda3` + `sda7`** (skip `sda4`/`sda2`),
+      stored on `103.0.1.16:/mnt/ssdpool/cd108_images`
 - [ ] verified on the first re-imaged machine (unique id/host keys, ping works)

@@ -22,11 +22,11 @@ anything about the project — just follow the steps.
 
 ## What goes in the image (important)
 
-Capture **only the system partitions** (the EFI/ESP + the ext4 Ubuntu root).
-**Skip the data partition** — the one whose partition label is **`zfs`** /
-filesystem label **`ssdpool`**. That partition holds the course homes and a
-Windows VM which are distributed separately (via Ansible `zfs recv`), so they must
-**not** be in the image — the clones must get an empty, labelled `zfs` partition.
+Capture **three** partitions: the **EFI/ESP**, the **ext4 Ubuntu root**, and the
+small **`clonezilla` recovery** partition. **Skip the ZFS data partition** — the
+one labelled `ssdpool` / `zfs`. That one holds the course homes and a Windows VM
+distributed separately (via Ansible `zfs recv`), so it must **not** be in the
+image; clones get an empty, labelled `zfs` partition built by Ansible instead.
 That's why this uses **`saveparts`**, not `savedisk`.
 
 ## Steps
@@ -50,13 +50,16 @@ That's why this uses **`saveparts`**, not `savedisk`.
 6. Choose **`Expert`** mode.
 7. Choose **`saveparts`** (save selected partitions, not the whole disk).
 8. **Image name:** **`cd108-golden-ubuntu2404-<date>`** (today's date, no spaces).
-9. **Select partitions:** tick **only** the **EFI system partition** and the
-   **ext4 root**. On this machine that's **`sda1`** (vfat, 100 MB, mounts
-   `/boot/efi`) and **`sda3`** (ext4, ~190 GB, mounts `/`). **Leave unticked:**
-   `sda4` (the `ssdpool`/`zfs` data partition — must not be in the image), `sda2`
-   (16 MB Microsoft-reserved), and **`sda7`** (a 4 GB vfat partition labelled
-   `clonezilla` — do **not** confuse it with the 100 MB EFI one). Confirm against
-   your own `lsblk` from step 3 in case the disk isn't `sda`.
+9. **Select partitions:** tick these **three** —
+   - **`sda1`** — vfat, **100 MB**, mounts `/boot/efi` (the EFI partition)
+   - **`sda3`** — ext4, **~190 GB**, mounts `/` (the Ubuntu root)
+   - **`sda7`** — vfat, **4 GB**, labelled `clonezilla` (the recovery partition)
+
+   **Leave unticked:** **`sda4`** (the `ssdpool`/`zfs` data partition — must **not**
+   be in the image) and **`sda2`** (16 MB Microsoft-reserved, not needed). Note
+   there are two vfat partitions — the **100 MB** one (`sda1`, EFI) and the **4 GB**
+   one (`sda7`, recovery) — tick both, but don't mix them up. Confirm against your
+   own `lsblk` from step 3 in case the disk isn't `sda`.
 10. Extra parameters: accept the defaults (Clonezilla also records the disk's
     partition table alongside the image — keep that). Compression default is fine.
     Confirm **`y`** to proceed; it writes to the share (the long part).
@@ -67,10 +70,10 @@ That's why this uses **`saveparts`**, not `savedisk`.
 
 The final screen must say **"finished successfully"** with **no red errors**. On
 the share you'll get a folder `cd108-golden-ubuntu2404-<date>` containing the two
-system-partition images **and** the disk's partition-table files (`*-pt.sf`,
-`*-gpt.*`, `*-mbr`) — kept as a reference for restores. If the folder contains an
-image of the `zfs`/`ssdpool` partition, the wrong partition was ticked — redo
-step 9 (that partition must **not** be in the image).
+three partition images (EFI, root, recovery) **and** the disk's partition-table
+files (`*-pt.sf`, `*-gpt.*`, `*-mbr`) — kept as a reference for restores. If the
+folder contains an image of the `zfs`/`ssdpool` partition, the wrong partition was
+ticked — redo step 9 (that partition must **not** be in the image).
 
 > Simplest fallback if `saveparts` gives you trouble: use **`savedisk`** (whole
 > disk) instead. It just works but the image is much larger (it includes the
