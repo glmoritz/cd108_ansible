@@ -50,10 +50,41 @@ ansible cd108-test-01 -b -m command -a 'cat /etc/ssh/authorized_keys.d/daelt'
 ansible-playbook prepare-golden-image.yml -e capture_now=true --ask-vault-pass
 ```
 
-This flushes logs/caches, blanks the machine-id, and removes the SSH host keys.
-**When it finishes, do not let the machine boot back into Ubuntu** — power it off
-and go straight to Clonezilla. (If you do boot Ubuntu again, it just regenerates
-those files; re-run the sysprep right before you actually capture.)
+This flushes logs/caches, blanks the machine-id, installs a **first-boot
+host-key regeneration unit** (`regenerate-ssh-host-keys.service`), and — as its
+**last** action — removes the SSH host keys. Removing them **drops your SSH
+session** (Ubuntu's ssh is socket-activated and won't serve keyless); that's
+expected, and the play tolerates it. **Do not let the machine boot back into
+Ubuntu** — power it off and go straight to Clonezilla. (A normal boot would run
+the regen unit and re-create host keys, which then get captured and shared across
+clones — the twin problem. If that happens, re-run the sysprep before capturing.)
+
+> **Why the regen unit matters:** the image ships with *no* host keys (so clones
+> aren't identical twins), but Ubuntu Desktop has no cloud-init to recreate them,
+> and `sshd` won't start without any. The unit runs `ssh-keygen -A` once, before
+> `sshd`, on each clone's first boot → unique keys, SSH comes up, Ansible can
+> connect. **Without it, a clone boots with SSH dead.**
+>
+> **If the sysprep died before installing the unit** (the host-key removal cuts
+> the connection): SSH to the golden is now down, so add the unit from the
+> **console** before capturing —
+> ```bash
+> sudo tee /etc/systemd/system/regenerate-ssh-host-keys.service >/dev/null <<'EOF'
+> [Unit]
+> Description=Regenerate SSH host keys if missing (first boot after imaging)
+> Before=ssh.service ssh.socket sshd.service
+> ConditionPathExistsGlob=!/etc/ssh/ssh_host_*_key
+> [Service]
+> Type=oneshot
+> RemainAfterExit=yes
+> ExecStart=/usr/bin/ssh-keygen -A
+> [Install]
+> WantedBy=multi-user.target
+> EOF
+> sudo systemctl enable regenerate-ssh-host-keys.service
+> sudo rm -f /etc/ssh/ssh_host_*     # keep the image key-less
+> sudo poweroff                      # then boot Clonezilla — do NOT boot Ubuntu
+> ```
 
 ## Step 3 — power off and boot Clonezilla
 

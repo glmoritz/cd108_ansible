@@ -83,19 +83,46 @@
     - name: Drop the dbus machine-id copy
       ansible.builtin.file: { path: /var/lib/dbus/machine-id, state: absent }
 
-    # SSH host keys: remove them → the ssh service regenerates a unique set on
-    # first boot, so clones don't all share one host key (a real security hole).
-    - name: Remove SSH host keys (regenerated uniquely on first boot)
-      ansible.builtin.shell: rm -f /etc/ssh/ssh_host_*
-      changed_when: true
+    # Ubuntu Desktop has no cloud-init to regenerate missing host keys, and sshd
+    # refuses to start without any — so a keyless clone would boot with SSH dead.
+    # Bake a first-boot oneshot that runs `ssh-keygen -A` BEFORE sshd if the keys
+    # are missing. It fires once per clone (each gets a unique set), then the
+    # ConditionPathExistsGlob makes it a no-op forever after. This MUST be in
+    # place before we delete the keys below.
+    - name: Install a first-boot unit that regenerates SSH host keys if missing
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/regenerate-ssh-host-keys.service
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Regenerate SSH host keys if missing (first boot after imaging)
+          Before=ssh.service ssh.socket sshd.service
+          ConditionPathExistsGlob=!/etc/ssh/ssh_host_*_key
+          [Service]
+          Type=oneshot
+          RemainAfterExit=yes
+          ExecStart=/usr/bin/ssh-keygen -A
+          [Install]
+          WantedBy=multi-user.target
 
-    - name: Make sure host keys DO get regenerated on first boot
-      ansible.builtin.systemd: { name: ssh.service, enabled: true }
+    - name: Enable the host-key regeneration unit
+      ansible.builtin.systemd:
+        name: regenerate-ssh-host-keys.service
+        enabled: true
+        daemon_reload: true
 
-    # --- final word --------------------------------------------------------
+    # --- final word (runs BEFORE we cut our own SSH session) ---------------
     - name: What to do now
       ansible.builtin.debug:
         msg:
           - "Golden generalized. DO NOT reboot into the OS."
-          - "Power it off, boot the Clonezilla media, and capture the disk."
-          - "See docs/golden-image-prep.md for the capture (leave the zfs partition empty)."
+          - "SSH will drop on the next task (host keys removed) — that's expected."
+          - "Power it off, boot the Clonezilla media, and capture (see docs/golden-image-prep.md)."
+
+    # LAST task: removing the host keys drops our own connection under Ubuntu's
+    # socket-activated ssh, so it must be last and tolerate the disconnect. The
+    # regen unit above brings SSH back (with a unique key set) on first boot.
+    - name: Remove SSH host keys (LAST — this cuts our SSH session by design)
+      ansible.builtin.shell: rm -f /etc/ssh/ssh_host_*
+      changed_when: true
+      ignore_unreachable: true
