@@ -48,6 +48,13 @@ The long-term plan is to thin the image and grow the playbook, but today both
 matter. If something is missing after a converge, ask: *is this the image's job
 or Ansible's?*
 
+**Imaging is out-of-band.** Clonezilla runs from its own live environment, so a
+machine must **reboot into Clonezilla** to be imaged — you can't do it from the
+running OS or remotely from the control node. Clonezilla lays down the ext4
+system partition and leaves an empty, labelled `zfs` partition; Ansible then
+builds the pool and receives the homes. See
+[`runbooks.md` → Re-image a machine](runbooks.md#re-image-a-machine-clonezilla).
+
 ## Addressing — no fixed IPs, no registry
 
 Lab IPs are **not fixed** and there is **no external host registry**. Instead we

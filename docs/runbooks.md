@@ -7,9 +7,11 @@ first so the commands make sense. Run everything from the repo root on the
 Jump to: [Day one](#day-one-first-time-setup) · [Keys & secrets](#keys--secrets)
 · [Build the server VM](#build-or-rebuild-the-server-vm) · [Prepare the
 server](#prepare-the-server-services) · [Harvest goldens](#harvest-the-goldens)
-· [Add a lab machine](#add-a-lab-machine) · [Converge](#converge-a-machine-siteyml)
-· [Reset homes](#reset-homes-destructive) · [Windows VM](#the-windows-emergency-vm)
-· [Everyday changes](#everyday-changes)
+· [Add a lab machine](#add-a-lab-machine) · [Re-image
+(Clonezilla)](#re-image-a-machine-clonezilla) ·
+[Converge](#converge-a-machine-siteyml) · [Reset
+homes](#reset-homes-destructive) · [Windows VM](#the-windows-emergency-vm) ·
+[Everyday changes](#everyday-changes)
 
 ---
 
@@ -160,6 +162,79 @@ windows (winvm reverts to `@ltspice`).
    ```bash
    ansible cd108-b12 -m ping
    ```
+
+---
+
+## Re-image a machine (Clonezilla)
+
+> **Key fact:** Clonezilla runs from its own **live environment**, not the
+> installed OS. You **cannot image a machine's system disk from the control
+> node** — the machine has to **reboot into Clonezilla**. Ansible only takes
+> over *after* the machine is imaged and booted. So re-imaging is a physical
+> (USB) or netboot (PXE) operation, not a remote `ansible-playbook` step.
+
+### What Clonezilla owns vs what Ansible owns
+
+Clonezilla restores the **ext4 Ubuntu system partition** (the base OS + local
+binaries like MATLAB under `/usr/local`). It does **not** provide the ZFS data:
+the disk also has an empty, **partlabel-`zfs`** partition
+(`zfs_data_device` in `group_vars/all.yml`) that Clonezilla leaves
+unformatted. After the restore, Ansible builds the `ssdpool` pool on that
+partition and `zfs recv`s the homes + Windows VM. So:
+
+```
+Clonezilla restore  →  boot  →  site.yml (builds ZFS, receives homes/windows)
+   = base OS image        = machine reachable    = fully configured machine
+```
+
+The course **homes and the Windows VM are NOT in the Clonezilla image** — they
+come from the server via `zfs send/recv` (see [Converge](#converge-a-machine-siteyml)).
+Keep the master image small by excluding the ZFS data partition.
+
+### A) Restore an image onto a machine (the common case)
+
+1. **Boot the target into Clonezilla** — from a Clonezilla Live USB (make one
+   once: download `clonezilla-live-*.iso`, `dd` it to a USB stick), press the
+   boot-menu key (often F12), pick the USB.
+2. Choose **`device-image`**, then the image **source**: the server over
+   **SSH/NFS** (the images live on the server's `vdb`), or a local USB with the
+   image on it.
+3. **`restoreparts`** the ext4 system partition(s) onto the target's disk. Do
+   **not** overwrite the `zfs`-labelled data partition unless you intend to wipe
+   local homes — Ansible will (re)build the pool either way.
+4. Reboot. The machine comes up carrying the golden's hostname; it's reachable
+   by its MAC-derived IPv6 (see [architecture → Addressing](architecture.md#addressing--no-fixed-ips-no-registry)).
+5. Make sure it's in `inventory/hosts.yml` (see [Add a lab
+   machine](#add-a-lab-machine)), then converge it — this sets its real
+   hostname, builds ZFS, and receives homes:
+   ```bash
+   ansible-playbook site.yml --limit <hostname> --check --diff --ask-vault-pass
+   ansible-playbook site.yml --limit <hostname> --ask-vault-pass
+   ```
+
+### B) Capture a new master image (from the reference machine)
+
+When you've improved the reference machine's base OS and want a new image:
+
+1. Boot the reference machine into Clonezilla.
+2. `device-image` → **`saveparts`**, selecting the **EFI + ext4 system**
+   partitions only (skip the `zfs` partition — its homes are captured separately
+   by [`harvest-golden.yml`](#harvest-the-goldens), not by Clonezilla).
+3. Save the image to the server (SSH/NFS) so restores can pull it from there.
+
+> Confirm the exact partition numbers against your golden's `lsblk` before
+> selecting — the principle (system partitions in the image, `zfs` partition
+> out) is what matters.
+
+### At scale: PXE instead of USB (to be set up)
+
+Walking a USB to 50 machines doesn't scale. The intended approach is **PXE
+netboot + Clonezilla SE (DRBL)**: the server offers a netboot Clonezilla that
+**multicasts** the image to many machines at once. With PXE in place you can even
+*initiate* a re-image remotely — set the machine's next boot to the network
+(`grub-reboot`/BIOS/IPMI) and reboot it — but the imaging itself still happens in
+the Clonezilla environment, never in the running OS. This isn't configured yet;
+it's the next step once the server is bridged onto the lab LAN.
 
 ---
 
