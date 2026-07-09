@@ -23,7 +23,9 @@ autoinstall:
     install-server: true
     allow-pw: false             # key-only
     authorized-keys:
-      - "{{ admin_pubkey }}"
+{% for k in authorized_keys_list %}
+      - "{{ k }}"
+{% endfor %}
   packages:
     - qemu-guest-agent          # lets the host read the guest IP via the agent
   late-commands:

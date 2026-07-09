@@ -23,7 +23,11 @@
     vm_network: default                # NAT for now; bridge to the lab LAN later
     server_iso: /home/moritz/Downloads/ubuntu-26.04-live-server-amd64.iso
     admin_user: daelt
-    admin_pubkey: "{{ lookup('file', '~/.ssh/id_ed25519.pub') }}"
+    # Authorize both the operator's personal key and the passphrase-less
+    # control-node deploy key (the latter is what unattended runs use).
+    authorized_keys_list:
+      - "{{ lookup('file', '~/.ssh/id_ed25519.pub') }}"
+      - "{{ lookup('file', '~/.ssh/id_cd108_ansible.pub') }}"
     # Login is key-only + passwordless sudo, so the account password is an
     # unused fallback — generate a throwaway and hash it.
     daelt_password_hash: "{{ lookup('password', '/dev/null length=16') | password_hash('sha512') }}"

@@ -15,13 +15,16 @@
 # the first/clean case.
 - name: Reset course homes to the server golden
   hosts: labs
-  serial: "{{ reset_serial | default('20%') }}"   # roll in waves, not all 50 at once
+  # Roll in waves of N machines at a time (destructive → limit blast radius);
+  # each wave finishes before the next starts. Default 4 matches
+  # zfs_send_concurrency; override with -e reset_serial=N.
+  serial: "{{ reset_serial | default(4) }}"
   gather_facts: false
   tasks:
-    - name: Snapshot then send each course golden home onto this machine (throttled)
+    - name: Snapshot then send each course golden home onto this machine
       shell: >
         zfs send {{ zfs_pool_server }}/golden/home/{{ item }}@{{ golden_snapshot }}
-        | mbuffer -q -r {{ zfs_recv_rate }}
+        | mbuffer -q
         | ssh {{ inventory_hostname }} "zfs recv -F {{ zfs_pool }}/home/{{ item }}"
       delegate_to: "{{ server_host }}"
       loop: "{{ discipline_users }}"

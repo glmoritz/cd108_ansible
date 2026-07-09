@@ -10,7 +10,14 @@
 server_host: cd108.tutu.eng.br        # lab hub today → becomes the server VM's IP later
 admin_user: daelt
 ansible_user: "{{ admin_user }}"      # push connects over SSH as the admin account
-# professor_ssh_pubkey: "ssh-ed25519 AAAA..."   # set to enable passwordless admin SSH
+
+# Control-node deploy key: a passphrase-less ed25519 key on this control node,
+# used ONLY to manage the fleet (so unattended/overnight runs can authenticate
+# without a human unlocking a passphrase). The common role installs the
+# matching public key on every admin account; provisioning bakes it into the
+# server/golden. Keep the private half on the control node only.
+ansible_ssh_private_key_file: "~/.ssh/id_cd108_ansible"
+professor_ssh_pubkey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPt7TL+tEfuCQ6up+436oQ2+XJ8WeRNHbZFoSgUCtxKj cd108-ansible-control-node"
 
 # apt cache: apt-cacher-ng runs on the SERVER (confirmed on the golden, which
 # points here). apt-cacher-ng only proxies http, so https is disabled and we
@@ -41,7 +48,10 @@ zfs_pool: ssdpool                       # local pool name on each student machin
 zfs_data_device: /dev/disk/by-partlabel/zfs   # Clonezilla leaves this unformatted+labelled
 zfs_pool_server: ssdpool                # pool name ON the server holding the goldens
 golden_snapshot: golden                 # snapshot name of the golden datasets
-zfs_recv_rate: 50M                      # mbuffer throttle (bandwidth cap over break days)
+# Overnight image sends run N machines AT A TIME and move to the next as each
+# finishes (Ansible task-level `throttle`) — NOT a bandwidth cap. To have more
+# than N truly in flight, also raise `forks` in ansible.cfg to >= this.
+zfs_send_concurrency: 4
 
 # ZFS snapshots are managed by SANOID (installed with the pool). The golden had
 # sanoid installed with an EMPTY config (so nothing was actually snapshotting) —

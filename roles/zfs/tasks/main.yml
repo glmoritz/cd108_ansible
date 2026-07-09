@@ -53,24 +53,29 @@
     dest: /etc/sanoid/sanoid.conf
     mode: "0644"
 
-# --- initial receive of the golden datasets (throttled, once) --------------
-# Course homes carry their `Downloads` child, so the send is recursive (-R).
-- name: Initial receive of course homes from the server (throttled, once)
+# --- initial receive of the golden datasets --------------------------------
+# Sent from the server, at most `zfs_send_concurrency` machines at a time
+# (task `throttle`): as each host finishes its receive, the next one starts.
+# mbuffer is a plain stream buffer here (decouples send/recv over ssh) — no
+# rate cap. Course homes carry their `Downloads` child, so the send is -R.
+- name: Initial receive of course homes from the server (N at a time)
   shell: >
     zfs send -R {{ zfs_pool_server }}/golden/home/{{ item }}@{{ golden_snapshot }}
-    | mbuffer -q -r {{ zfs_recv_rate }}
+    | mbuffer -q
     | ssh {{ inventory_hostname }} "zfs recv -F {{ zfs_pool }}/home/{{ item }}"
   delegate_to: "{{ server_host }}"
+  throttle: "{{ zfs_send_concurrency }}"
   args:
     creates: "/home/{{ item }}"
   loop: "{{ discipline_users }}"
 
-- name: Initial receive of the Windows emergency VM (throttled, once)
+- name: Initial receive of the Windows emergency VM (N at a time)
   shell: >
     zfs send {{ zfs_pool_server }}/golden/windows@{{ golden_snapshot }}
-    | mbuffer -q -r {{ zfs_recv_rate }}
+    | mbuffer -q
     | ssh {{ inventory_hostname }} "zfs recv -F {{ zfs_pool }}/windows"
   delegate_to: "{{ server_host }}"
+  throttle: "{{ zfs_send_concurrency }}"
   args:
     creates: "/{{ zfs_pool }}/windows"
 
