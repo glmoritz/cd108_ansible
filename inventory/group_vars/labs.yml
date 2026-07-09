@@ -18,7 +18,9 @@
 lab_ipv6_prefix: "2801:82:c004:103::"   # confirmed router-advertised /64; with
                                         # privacy ext off (common role) a host's
                                         # global addr = this + its EUI-64.
-lab_uplink_iface: eno1         # control-node NIC facing the labs (link-local only)
+# This is the CONTROL NODE's own NIC (one value, not per lab machine); it is
+# only used as the IPv6 zone id in the link-local fallback (empty prefix).
+lab_uplink_iface: eno1
 
 ansible_host: >-
   {{ (lab_ipv6_prefix ~ (mac | eui64_ifid))

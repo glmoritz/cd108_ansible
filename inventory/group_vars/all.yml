@@ -122,7 +122,9 @@ clipboard_writers:
   - microcontroladores
 
 # --- WoL: NIC supports it; enable magic-packet wake via a udev rule -------
-wol_interface: eno1
+# NIC names vary per machine (eno1 / enp3s0 / eth0 …), so default to each
+# host's fact-discovered default-route interface. Override per host if needed.
+wol_interface: "{{ ansible_default_ipv4.interface | default('') }}"
 
 # --- Packages that are plain apt installs ---------------------------------
 common_packages:
