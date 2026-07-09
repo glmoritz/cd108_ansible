@@ -1,0 +1,31 @@
+#cloud-config
+# Ubuntu autoinstall (subiquity) for the DAELT lab server VM. Rendered by
+# provision-server-vm.yml into a NoCloud seed ISO (label CIDATA). Unattended:
+# installs a minimal server on the smallest disk (the OS disk), leaves the
+# large data disk blank, and hands control to Ansible via key-only SSH +
+# passwordless sudo for {{ admin_user }}.
+autoinstall:
+  version: 1
+  locale: en_US.UTF-8
+  keyboard:
+    layout: us
+  storage:
+    layout:
+      name: lvm
+      match:
+        size: smallest          # OS disk only; the large data disk is left blank
+  identity:
+    hostname: {{ vm_name }}
+    realname: DAELT Lab Admin
+    username: {{ admin_user }}
+    password: "{{ daelt_password_hash }}"
+  ssh:
+    install-server: true
+    allow-pw: false             # key-only
+    authorized-keys:
+      - "{{ admin_pubkey }}"
+  packages:
+    - qemu-guest-agent          # lets the host read the guest IP via the agent
+  late-commands:
+    - "echo '{{ admin_user }} ALL=(ALL) NOPASSWD:ALL' > /target/etc/sudoers.d/90-{{ admin_user }}-nopasswd"
+    - "chmod 440 /target/etc/sudoers.d/90-{{ admin_user }}-nopasswd"

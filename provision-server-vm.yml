@@ -1,0 +1,97 @@
+---
+# Provision the DAELT lab server as a libvirt VM on the KVM host (moritz-pc).
+# The "ansible way" record of how cd108-server was brought up: renders an
+# Ubuntu autoinstall NoCloud seed, creates the disks in the vmstore pool, and
+# runs an unattended install. Afterwards the VM is a normal inventory host
+# (group `server`) managed by site.yml. Run ON the KVM host:
+#
+#   ansible-playbook provision-server-vm.yml
+#
+# Idempotent-ish: skips volume creation / install if the domain already exists.
+# Requires: libvirt group membership (qemu:///system), xorriso, virt-install.
+- name: Bring up the lab server VM
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    vm_name: cd108-server
+    vm_memory_mib: 8192
+    vm_vcpus: 4
+    vm_os_disk: 60G
+    vm_data_disk: 700G
+    vm_pool: vmstore
+    vm_network: default                # NAT for now; bridge to the lab LAN later
+    server_iso: /home/moritz/Downloads/ubuntu-26.04-live-server-amd64.iso
+    admin_user: daelt
+    admin_pubkey: "{{ lookup('file', '~/.ssh/id_ed25519.pub') }}"
+    # Login is key-only + passwordless sudo, so the account password is an
+    # unused fallback — generate a throwaway and hash it.
+    daelt_password_hash: "{{ lookup('password', '/dev/null length=16') | password_hash('sha512') }}"
+    seed_dir: "{{ lookup('env', 'HOME') }}/.cache/cd108-server-seed"
+  tasks:
+    - name: Fail early if the server ISO is missing
+      stat: { path: "{{ server_iso }}" }
+      register: iso_stat
+      failed_when: not iso_stat.stat.exists
+
+    - name: Does the domain already exist?
+      command: "virsh dominfo {{ vm_name }}"
+      register: dominfo
+      changed_when: false
+      failed_when: false
+
+    - name: Build and install (only if the domain does not exist yet)
+      when: dominfo.rc != 0
+      block:
+        - name: Seed staging dir
+          file: { path: "{{ seed_dir }}", state: directory, mode: "0700" }
+
+        - name: Render autoinstall seed files
+          template:
+            src: "provisioning/server-vm/{{ item }}.j2"
+            dest: "{{ seed_dir }}/{{ item }}"
+            mode: "0600"
+          loop: [user-data, meta-data]
+
+        - name: Build the NoCloud seed ISO (label CIDATA)
+          command: >
+            xorriso -as mkisofs -o {{ seed_dir }}/seed.iso -V CIDATA -J -r
+            {{ seed_dir }}/user-data {{ seed_dir }}/meta-data
+          args:
+            creates: "{{ seed_dir }}/seed.iso"
+
+        - name: Create the OS and data disks in the pool
+          command: "virsh vol-create-as {{ vm_pool }} {{ item.name }} {{ item.size }} --format qcow2"
+          loop:
+            - { name: "{{ vm_name }}.qcow2", size: "{{ vm_os_disk }}" }
+            - { name: "{{ vm_name }}-data.qcow2", size: "{{ vm_data_disk }}" }
+
+        - name: Register the seed volume, then upload the ISO into it
+          shell: |
+            set -e
+            sz=$(stat -c%s "{{ seed_dir }}/seed.iso")
+            virsh vol-create-as {{ vm_pool }} {{ vm_name }}-seed.iso "$sz" --format raw
+            virsh vol-upload --pool {{ vm_pool }} {{ vm_name }}-seed.iso "{{ seed_dir }}/seed.iso"
+
+        - name: Run the unattended install (blocks until install finishes)
+          command: >
+            virt-install
+            --name {{ vm_name }}
+            --memory {{ vm_memory_mib }} --vcpus {{ vm_vcpus }} --cpu host-passthrough
+            --os-variant detect=on,require=off
+            --disk vol={{ vm_pool }}/{{ vm_name }}.qcow2,bus=virtio
+            --disk vol={{ vm_pool }}/{{ vm_name }}-data.qcow2,bus=virtio
+            --disk vol={{ vm_pool }}/{{ vm_name }}-seed.iso,device=cdrom
+            --network network={{ vm_network }},model=virtio
+            --graphics none --console pty,target_type=serial
+            --location "{{ server_iso }},kernel=casper/vmlinuz,initrd=casper/initrd"
+            --extra-args "autoinstall ds=nocloud console=ttyS0,115200n8"
+            --noreboot --noautoconsole --wait -1
+          async: 3600
+          poll: 15
+
+        - name: Start the installed VM (--noreboot left it powered off)
+          command: "virsh start {{ vm_name }}"
+
+        - name: Autostart the VM with the host
+          command: "virsh autostart {{ vm_name }}"
