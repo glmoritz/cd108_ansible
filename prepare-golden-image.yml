@@ -1,0 +1,101 @@
+---
+# ===========================================================================
+# SYSPREP the golden — the LAST thing you run before capturing the image.
+#
+# This "generalizes" the running golden so every machine cloned from the
+# captured image comes up UNIQUE (its own machine-id, its own SSH host keys)
+# instead of being an identical twin of the golden. It also makes sure the
+# image-owned deploy key is in place so a fresh clone accepts Ansible on first
+# boot (see the `common` role — this playbook just guarantees it ran).
+#
+#   1.  ansible-playbook site.yml --limit cd108-test-01 --tags common --ask-vault-pass
+#   2.  ansible-playbook prepare-golden-image.yml -e capture_now=true --ask-vault-pass
+#   3.  POWER OFF (do NOT let it reboot into the OS) → boot Clonezilla → capture.
+#
+# DESTRUCTIVE: it deletes this machine's SSH host keys and machine-id. That is
+# fine ONLY because the very next boot is Clonezilla, not the OS. If you boot
+# the OS again after running this, it just regenerates them (no harm), but then
+# the identity you captured is stale — so re-run this right before capture.
+#
+# Guarded: nothing runs unless you pass  -e capture_now=true.
+# ===========================================================================
+- name: Sysprep the golden for image capture
+  hosts: cd108-test-01
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Refuse to run without an explicit go-ahead
+      ansible.builtin.assert:
+        that: capture_now | default(false) | bool
+        fail_msg: >-
+          This wipes the machine's identity. Re-run with -e capture_now=true,
+          and ONLY when the next boot will be Clonezilla (not the OS).
+        success_msg: "Generalizing the golden — power off (do not reboot the OS) when this finishes."
+
+  tasks:
+    # --- confirm the image-owned deploy key is baked (first-connect fix) ----
+    - name: The deploy key must be in an image-owned path (not just the ZFS home)
+      ansible.builtin.stat:
+        path: "/etc/ssh/authorized_keys.d/{{ admin_user }}"
+      register: baked_key
+
+    - name: Fail early if the image-owned key is missing
+      ansible.builtin.assert:
+        that: baked_key.stat.exists
+        fail_msg: >-
+          /etc/ssh/authorized_keys.d/{{ admin_user }} is missing — run the
+          `common` role first (ansible-playbook site.yml --tags common ...),
+          or clones won't accept Ansible on first boot.
+
+    # --- flush logs and caches so the image is clean and small -------------
+    - name: Clean apt caches
+      ansible.builtin.apt: { autoclean: true, clean: true }
+
+    - name: Reset cloud-init so the clone re-runs first-boot (if present)
+      ansible.builtin.command: cloud-init clean --logs --seed
+      failed_when: false
+      changed_when: true
+
+    - name: Vacuum the systemd journal
+      ansible.builtin.command: journalctl --rotate --vacuum-time=1s
+      changed_when: true
+
+    - name: Truncate rotated/plain logs
+      ansible.builtin.shell: >-
+        find /var/log -type f \( -name '*.log' -o -name '*.[0-9]' -o -name '*.gz' \)
+        -exec truncate -s0 {} + ; :> /var/log/wtmp ; :> /var/log/btmp ; :> /var/log/lastlog
+      changed_when: true
+
+    - name: Clear per-account shell history and tmp
+      ansible.builtin.shell: >-
+        rm -f /root/.bash_history
+        {% for u in ([admin_user] + discipline_users) %}/home/{{ u }}/.bash_history {% endfor %};
+        rm -rf /tmp/* /var/tmp/* ; :
+      changed_when: true
+
+    # --- generalize identity: unique per clone on next boot ----------------
+    # machine-id: empty file → systemd generates a fresh one at boot. Removing
+    # the dbus symlink target avoids a stale copy.
+    - name: Blank the machine-id (regenerated uniquely on first boot)
+      ansible.builtin.copy: { dest: /etc/machine-id, content: "", mode: "0444" }
+
+    - name: Drop the dbus machine-id copy
+      ansible.builtin.file: { path: /var/lib/dbus/machine-id, state: absent }
+
+    # SSH host keys: remove them → the ssh service regenerates a unique set on
+    # first boot, so clones don't all share one host key (a real security hole).
+    - name: Remove SSH host keys (regenerated uniquely on first boot)
+      ansible.builtin.shell: rm -f /etc/ssh/ssh_host_*
+      changed_when: true
+
+    - name: Make sure host keys DO get regenerated on first boot
+      ansible.builtin.systemd: { name: ssh.service, enabled: true }
+
+    # --- final word --------------------------------------------------------
+    - name: What to do now
+      ansible.builtin.debug:
+        msg:
+          - "Golden generalized. DO NOT reboot into the OS."
+          - "Power it off, boot the Clonezilla media, and capture the disk."
+          - "See docs/golden-image-prep.md for the capture (leave the zfs partition empty)."

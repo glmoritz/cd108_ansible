@@ -9,6 +9,9 @@ Configuration management for ~50 Ubuntu machines across 4 research labs
 |---|---|
 | **Understand how it all fits** (read this first) | [`docs/architecture.md`](docs/architecture.md) |
 | **Do a task** — provision the server, harvest goldens, add a machine, converge, reset homes | [`docs/runbooks.md`](docs/runbooks.md) |
+| **Test the first lab machine** (day-of checklist) | [`docs/first-lab-test.md`](docs/first-lab-test.md) |
+| **Capture a new golden image** (prep + Clonezilla) | [`docs/golden-image-prep.md`](docs/golden-image-prep.md) |
+| **Automate the imaging** (USB → recovery partition → PXE) | [`docs/imaging-automation.md`](docs/imaging-automation.md) |
 | **Fix something that broke** | [`docs/troubleshooting.md`](docs/troubleshooting.md) |
 
 New here? Read the architecture doc, then follow **Day one** in the runbooks.

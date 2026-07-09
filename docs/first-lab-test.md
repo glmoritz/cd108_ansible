@@ -34,11 +34,17 @@ lab LAN can't see it.
 
 A freshly imaged machine boots with the ext4 image but **no ZFS homes yet**, so
 `daelt`'s `~/.ssh/authorized_keys` (which lives on ZFS) isn't there — Ansible's
-deploy key has nothing to authenticate against until the pool is built and homes
-received. Chicken-and-egg.
+deploy key would have nothing to authenticate against until the pool is built and
+homes received. Chicken-and-egg.
 
-- **Simplest for one machine:** drop the deploy key in over the **console** right
-  after boot (same move we used for the server — see
+- **Now solved in the image (default):** the `common` role also writes the deploy
+  key to the image-owned `/etc/ssh/authorized_keys.d/daelt` with an sshd drop-in
+  that reads it, so **once you capture the golden with the current config, a fresh
+  clone accepts Ansible on first boot** — nothing to do here. This is baked as
+  part of [golden image prep](golden-image-prep.md).
+- **If you're testing on a machine imaged from an OLD capture** (before that fix
+  shipped), drop the key in over the **console** once — same move we used for the
+  server (see
   [troubleshooting → serial console](troubleshooting.md#getting-into-a-vm-when-ssh-is-down-serial-console),
   but here it's the physical console/keyboard):
   ```bash
@@ -47,10 +53,6 @@ received. Chicken-and-egg.
   echo '<contents of ~/.ssh/id_cd108_ansible.pub>' >> ~/.ssh/authorized_keys
   chmod 600 ~/.ssh/authorized_keys
   ```
-- **Permanent fix (bake into the image):** put the deploy key in an image-owned
-  location sshd reads regardless of ZFS, e.g. `/etc/ssh/authorized_keys.d/daelt`
-  with `AuthorizedKeysFile .ssh/authorized_keys /etc/ssh/authorized_keys.d/%u`
-  in `sshd_config`, then capture the image. Then first-connect just works.
 
 ---
 

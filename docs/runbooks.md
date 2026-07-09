@@ -214,17 +214,25 @@ Keep the master image small by excluding the ZFS data partition.
 
 ### B) Capture a new master image (from the reference machine)
 
-When you've improved the reference machine's base OS and want a new image:
+When you've improved the reference machine's base OS and want a new image, first
+**prepare the golden**: converge it, bake the image-owned deploy key, and
+generalize its identity so clones aren't twins. That's its own checklist —
+**[`golden-image-prep.md`](golden-image-prep.md)** — do it before you capture.
+Then, in Clonezilla:
 
-1. Boot the reference machine into Clonezilla.
-2. `device-image` → **`saveparts`**, selecting the **EFI + ext4 system**
-   partitions only (skip the `zfs` partition — its homes are captured separately
-   by [`harvest-golden.yml`](#harvest-the-goldens), not by Clonezilla).
+1. Boot the (already-generalized) reference machine into Clonezilla.
+2. `device-image` → **`savedisk`** in **expert mode**, and **deselect the `zfs`
+   partition** (`sda4`) from the partitions to save. Clonezilla keeps the whole
+   partition table (so the `zfs` partlabel survives) but images only the EFI +
+   ext4 system → on restore the `zfs` partition comes back **empty and labelled**.
+   The homes/Windows VM are received separately by the `zfs` role, not by
+   Clonezilla.
 3. Save the image to the server (SSH/NFS) so restores can pull it from there.
 
 > Confirm the exact partition numbers against your golden's `lsblk` before
 > selecting — the principle (system partitions in the image, `zfs` partition
-> out) is what matters.
+> out and empty) is what matters. Full details and the non-destructive rationale:
+> [`golden-image-prep.md`](golden-image-prep.md).
 
 ### Automating it (unattended USB → recovery partition → PXE)
 

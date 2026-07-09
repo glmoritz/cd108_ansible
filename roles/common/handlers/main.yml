@@ -4,3 +4,6 @@
 
 - name: reload udev
   command: udevadm control --reload-rules
+
+- name: reload sshd
+  ansible.builtin.systemd: { name: ssh, state: reloaded }

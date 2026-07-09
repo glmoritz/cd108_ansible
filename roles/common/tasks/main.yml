@@ -125,6 +125,36 @@
     key: "{{ professor_ssh_pubkey }}"
   when: professor_ssh_pubkey is defined
 
+# --- image-owned deploy key (survives BOTH a home reset and a fresh image) --
+# The key above lands in ~daelt/.ssh/authorized_keys, which lives on the ZFS
+# home — NOT in the Clonezilla image, and absent on a freshly-imaged machine
+# until the pool is built and homes are received. So ALSO drop the deploy key in
+# an image-owned path sshd reads regardless of ZFS. Baked into the golden's ext4
+# BEFORE capture, it ships in every clone → Ansible can reach a machine on first
+# boot, before any zfs recv. This is the permanent fix for the first-connect
+# chicken-egg (see docs/first-lab-test.md).
+- name: Ensure the image-owned authorized_keys dir exists
+  file: { path: /etc/ssh/authorized_keys.d, state: directory, mode: "0755" }
+
+- name: Bake the deploy key into the image-owned location
+  copy:
+    dest: "/etc/ssh/authorized_keys.d/{{ admin_user }}"
+    content: "{{ professor_ssh_pubkey }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+  when: professor_ssh_pubkey is defined
+
+- name: Point sshd at the image-owned keys too (in addition to ~/.ssh)
+  copy:
+    dest: /etc/ssh/sshd_config.d/10-image-authkeys.conf
+    content: |
+      # Read per-user keys from BOTH the ZFS home and the image-owned dir, so a
+      # freshly-imaged machine (no ZFS homes yet) still accepts the deploy key.
+      AuthorizedKeysFile .ssh/authorized_keys /etc/ssh/authorized_keys.d/%u
+    mode: "0644"
+  notify: reload sshd
+
 # --- hostname (declarative, replaces the golden's set-hostname-from-mac.sh) -
 # Name the host in inventory and Ansible applies it — no boot-time MAC script.
 - name: Set the hostname from inventory
