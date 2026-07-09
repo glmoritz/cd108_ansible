@@ -50,8 +50,13 @@ That's why this uses **`saveparts`**, not `savedisk`.
 6. Choose **`Expert`** mode.
 7. Choose **`saveparts`** (save selected partitions, not the whole disk).
 8. **Image name:** **`cd108-golden-ubuntu2404-<date>`** (today's date, no spaces).
-9. **Select partitions:** tick **only the EFI + ext4 root** partitions you
-   identified in step 3. **Leave the `zfs`/`ssdpool` partition unticked.**
+9. **Select partitions:** tick **only** the **EFI system partition** and the
+   **ext4 root**. On this machine that's **`sda1`** (vfat, 100 MB, mounts
+   `/boot/efi`) and **`sda3`** (ext4, ~190 GB, mounts `/`). **Leave unticked:**
+   `sda4` (the `ssdpool`/`zfs` data partition — must not be in the image), `sda2`
+   (16 MB Microsoft-reserved), and **`sda7`** (a 4 GB vfat partition labelled
+   `clonezilla` — do **not** confuse it with the 100 MB EFI one). Confirm against
+   your own `lsblk` from step 3 in case the disk isn't `sda`.
 10. Extra parameters: accept the defaults (Clonezilla also records the disk's
     partition table alongside the image — keep that). Compression default is fine.
     Confirm **`y`** to proceed; it writes to the share (the long part).
