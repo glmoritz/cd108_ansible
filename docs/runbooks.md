@@ -226,15 +226,16 @@ When you've improved the reference machine's base OS and want a new image:
 > selecting — the principle (system partitions in the image, `zfs` partition
 > out) is what matters.
 
-### At scale: PXE instead of USB (to be set up)
+### Automating it (unattended USB → recovery partition → PXE)
 
-Walking a USB to 50 machines doesn't scale. The intended approach is **PXE
-netboot + Clonezilla SE (DRBL)**: the server offers a netboot Clonezilla that
-**multicasts** the image to many machines at once. With PXE in place you can even
-*initiate* a re-image remotely — set the machine's next boot to the network
-(`grub-reboot`/BIOS/IPMI) and reboot it — but the imaging itself still happens in
-the Clonezilla environment, never in the running OS. This isn't configured yet;
-it's the next step once the server is bridged onto the lab LAN.
+Walking a USB to 50 machines doesn't scale, and the manual Clonezilla menu is
+error-prone. Clonezilla runs fully unattended from boot parameters (batch
+`ocs-sr` + an `ocs_prerun` NFS mount), so you can build a USB that boots, wipes,
+repartitions, and restores from the cd108 NFS with **zero keypresses** — and
+later put that same Clonezilla on a **recovery partition** so re-imaging needs no
+USB and can be **triggered remotely** (`grub-reboot` + reboot over SSH), or PXE
+netboot + DRBL multicast for whole-lab rebuilds. Full roadmap:
+[`imaging-automation.md`](imaging-automation.md).
 
 ---
 
