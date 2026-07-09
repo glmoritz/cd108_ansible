@@ -1,118 +1,89 @@
 # cd108_ansible — DAELT/UTFPR research lab automation
 
-Configuration management for ~50 Ubuntu machines across 4 research labs.
+Configuration management for ~50 Ubuntu machines across 4 research labs
+(**cd108, cd106, cb203, ca307**), plus the infra server that feeds them.
 
-## Philosophy (the phased plan)
+## 📖 Documentation — start here
 
-The **Clonezilla golden image** carries the current semester. This repo captures
-the *config layer* on top of a booted machine so next semester you edit text
-instead of clicking. Over time the image gets leaner and the playbook grows.
+| If you want to… | Read |
+|---|---|
+| **Understand how it all fits** (read this first) | [`docs/architecture.md`](docs/architecture.md) |
+| **Do a task** — provision the server, harvest goldens, add a machine, converge, reset homes | [`docs/runbooks.md`](docs/runbooks.md) |
+| **Fix something that broke** | [`docs/troubleshooting.md`](docs/troubleshooting.md) |
 
-- **Image owns:** ext4 Ubuntu partition, base OS, heavy proprietary/local
-  binaries for now (MATLAB at `/usr/local/MATLAB`, full TeX; the ST/SEGGER
-  stack — STM32CubeIDE/CubeMX, J-Link — rides in the received golden home).
-- **Ansible owns:** everything that varies or changes over time — *and* the
-  **ZFS pool** (Clonezilla can't do ZFS), user homes, and lab-specific config.
+New here? Read the architecture doc, then follow **Day one** in the runbooks.
 
-## Topology
+## What this is, in three sentences
 
-- **`server`** = the professor's PC. It's a *student machine on steroids* (runs
-  `common`/`desktop`/`sdr` so the prof demos exactly what students see) **plus**
-  the infra hub: NFS server for the shared exchange folder, and holder of the
-  **golden ZFS datasets** (per-course homes + the Windows emergency VM) that
-  students receive. No Samba, no Squid (dropped as messy). Today it's
-  `cd108.tutu.eng.br`; in production it becomes a dedicated **server VM** (IP).
-- **`labs`** = the ~50 student machines across 4 labs: **cd108, cd106, cb203,
-  ca307**. Only **ca307** joins FreeIPA. Each lab has its own `group_vars` file
-  for particularities. Reference the hub via `server_host`.
-- **apt cache** currently runs on the professor's **daily driver `103.0.1.16`**
-  (transitional); it moves to the server/VM in production.
+Lab machines are cloned from a **Clonezilla golden image**; this repo adds the
+**configuration layer** on top (packages, users, the ZFS pool, homes, per-lab
+settings) so next semester you edit text instead of clicking. The **server** (an
+Ubuntu VM) is the hub: apt cache, NFS exchange, the golden ZFS store, and the
+SDR++ build. Machines have **no fixed IPs** — they're addressed by an IPv6
+derived from their MAC (see the architecture doc).
 
-## Homes & the ZFS reset flow
-
-- Homes are **local ZFS** (pool `ssdpool`), one dataset per **course account**
-  (not per student), each with a separate `Downloads` **child dataset** so bulky
-  downloads survive a home reset.
-- Students upload to the cloud at end of class; homes are reset between
-  semesters by **`zfs recv` of a freshly-built golden** from the server — not a
-  local `zfs rollback` (rollback breaks vscode: old config vs. updated binary).
-- Reset flows **server → student** (matching the prof→student SSH keys) via
-  `zfs send | mbuffer -r | ssh student zfs recv -F`, throttled over the break.
-- Reset is **`reset-homes.yml`** — deliberate and destructive, never in `site.yml`.
-
-## Layout
+## Quick reference — the playbooks
 
 ```
-inventory/hosts.yml        groups: server, lab_a..lab_d, freeipa_members
-inventory/group_vars/      server_host, ZFS/NFS/MATLAB/package vars
-site.yml                   normal converge (safe to re-run)
-reset-homes.yml            DELIBERATE home reset (run by hand over break)
-harvest.sh                 run ON the golden machine to capture reality
-roles/common/             packages, external repos, users, ssh, grub, tweaks
-roles/desktop/            XFCE + xrdp, firefox captive-portal bookmark, clipboard group
-roles/zfs/                build pool + sanoid + initial receive of homes/windows
-roles/winvm/              Windows-VM revert wiring: scoped NOPASSWD sudo + launcher
-roles/sdr/                full SDR++/UHD/LibreSDR build (your procedure)
-roles/matlab/             LOCAL install; Ansible writes the network.lic
-roles/server/             NFS exchange folder (sticky) + golden datasets
-roles/freeipa/            join FreeIPA (only freeipa_members)
+site.yml                 normal converge, safe to re-run (server + lab machines)
+prepare-server.yml       just the server hub services (apt-cache, NFS, ZFS golden)
+provision-server-vm.yml  build the server VM from the Ubuntu ISO (unattended)
+harvest-golden.yml       snapshot the reference machine → server golden store
+reset-homes.yml          DELIBERATE, destructive home reset (run by hand, not in site.yml)
 ```
 
-## Item map (your notes → where it lives)
+Golden rules: **always `--check --diff` and `--limit` one machine first**;
+`reset-homes.yml` wipes homes so confirm students have saved; automation uses the
+deploy key `~/.ssh/id_cd108_ansible`.
+
+## Repo layout
+
+```
+ansible.cfg              inventory dir, deploy key, roles/filter plugin paths
+inventory/hosts.yml      static inventory: server + the 4 lab groups + their hosts
+inventory/group_vars/    all.yml (central vars), labs.yml (MAC→IPv6 addressing), cd108/ (+vault)
+filter_plugins/net.py    MAC → EUI-64 IPv6 address filter
+provisioning/server-vm/  autoinstall templates for the server VM
+roles/common/            packages, external repos, users, ssh + deploy key, hostname, WoL, ipv6
+roles/desktop/           XFCE + xrdp, firefox captive-portal bookmark, clipboard group
+roles/zfs/               build pool + sanoid snapshots + receive homes/windows (N at a time)
+roles/winvm/             Windows emergency VM: revert-to-@ltspice wiring + launcher
+roles/sdr/               build SDR++/UHD/LibreSDR once on the server, distribute artifact
+roles/matlab/            local MATLAB; Ansible writes the network.lic
+roles/server/            apt-cacher-ng, NFS "troca" exchange, ZFS golden pool + sharenfs
+roles/freeipa/           join FreeIPA (only ca307)
+```
+
+## Item map (original notes → where it lives)
 
 | Note | Role | Notes |
 |---|---|---|
-| build-essential, git, nmap, wireshark, tcpdump, gparted, gimp, inkscape, pinta, xournalpp, mosquitto_clients, moserial, openocd, boot-repair | common | plain apt; wireshark debconf preseeded |
-| vscode, docker | common | **managed external repos** — key/URL drift = one-file fix |
-| enable ssh, prof's key on students | common | passwordless prof→student |
-| user per course, docker sem sudo | common | **all** course accounts + daelt → docker group |
-| grub (headless) | common | `/etc/default/grub` + update-grub, no GUI tool |
-| rename PC por MAC | common | declarative via inventory hostname (native module) |
-| swap, RTC, ipv6 privacy, WoL | common | swap=image swapfile; RTC=UTC (dropped); `use_tempaddr=0`; WoL via 70-wol.rules |
-| idle-shutdown cron | — | **doesn't exist** — dropped |
-| UART kit verify | common | ST-Link/J-Link/OpenOCD via `*-udev-rules` pkgs; generic UART symlink still TODO |
-| firefox captive-portal bookmark | desktop | policies.json (snap path); net-new, not on golden yet |
-| xrdp (RDP), prof "clipboard" | desktop | xrdp + `clipboardwriters` group + `ssdpool/clipboard` |
-| wallpaper/desktop lockdown | desktop | **future** — not on the image yet |
-| ZFS pool on free space, recv homes + windows | zfs | Ansible builds `ssdpool`; throttled recv |
-| Windows emergency VM (revert-on-launch) | winvm | templated libvirt domain + NAT DHCP reservation; rolls disk to `@ltspice`; scoped NOPASSWD `zfs rollback`; `Windows VM (Reset)` launcher. Only the qcow2 is image-owned. **RDP password must be vaulted.** |
-| sanoid snapshots | zfs | `sanoid.conf` templated (golden's was empty → no-op) |
-| home reset | reset-homes.yml | deliberate `zfs recv` of golden |
-| rtlsdr, pluto, sdr++, uhd, LibreSDR fw | sdr | your full procedure, idempotent |
-| matlab (network license) | matlab | **LOCAL** install; Ansible writes `network.lic` |
+| build-essential, git, nmap, wireshark, tcpdump, gparted, gimp, inkscape, pinta, xournalpp, mosquitto-clients, moserial, openocd | common | plain apt; wireshark debconf preseeded |
+| vscode, docker | common | managed external repos — key/URL drift = one-file fix |
+| enable ssh, deploy key on admins | common | passwordless control-node → machine |
+| user per course, docker without sudo | common | course accounts + daelt → docker group |
+| grub (headless), hostname from inventory | common | native modules, no GUI tools |
+| ipv6 privacy off, WoL | common | `use_tempaddr=0` (enables EUI-64 addressing); WoL udev rule per NIC |
+| firefox captive-portal bookmark, xrdp, clipboard group | desktop | policies.json; `clipboardwriters` + `ssdpool/clipboard` |
+| ZFS pool, receive homes + windows, sanoid | zfs | Ansible builds `ssdpool`; receive N at a time; sanoid 15min/hourly/daily/… |
+| Windows emergency VM (revert-on-launch) | winvm | libvirt domain + NAT DHCP reservation; rolls disk to `@ltspice`; scoped NOPASSWD `zfs rollback`; RDP password **vaulted** |
+| rtlsdr, pluto, sdr++, uhd, LibreSDR fw | sdr | built once on server, artifact distributed |
+| matlab (network license) | matlab | local install; Ansible writes `network.lic` |
 | tex, stlink-tools, qucs-s | common | apt install (real packages) |
-| STM32CubeIDE/CubeMX, ST-Link server, J-Link | zfs (golden home) | image-owned binaries delivered in the received home; udev rules baked into the image |
-| NFS exchange "troca" folder | server | mode 1777 sticky = prof files undeletable |
-| freeipa join | freeipa | **only ca307**; domain/realm in group_vars/ca307.yml, secret in Vault |
+| STM32CubeIDE/CubeMX, ST-Link server, J-Link | zfs (golden home) | image-owned, delivered in the received home; udev rules baked into the image |
+| apt cache, NFS "troca", golden ZFS store | server | apt-cacher-ng (http only); troca mode 1777 sticky; `ssdpool/golden` shared to the lab subnet |
+| freeipa join | freeipa | only ca307 |
 
 ## Dropped / out of scope
 
-- **Samba, Squid** — removed (messy). NFS only.
-- **Windows partition mount, /var/tmp symlink, grub-customizer, cluster-ssh** — gone.
-- **Windows** is now an **emergency VM** (zfs-received), not dual-boot.
-- Disk partitioning + ext4 Ubuntu install stay in the Clonezilla image.
+Samba, Squid, Windows dual-boot (now an emergency VM), `/var/tmp` symlink,
+grub-customizer, cluster-ssh, idle-shutdown cron. Disk partitioning + the ext4
+Ubuntu install stay in the Clonezilla image.
 
-## Settled operational decisions
+## Status
 
-- **Apt caching:** apt-cacher-ng on the server; clients proxy through it.
-- **Heavy builds (SDR++):** built once on the server, artifact distributed to
-  students (libs still apt-installed per machine).
-- **Home reset cadence:** ~2–3× per semester (not just at break) → `reset-homes.yml`
-  supports an incremental `zfs send -i` path to keep repeat resets cheap.
-
-## Workflow
-
-1. **Done:** harvested the cd108 golden (`cd108-test-01`); vars + roles are now
-   grounded in reality (`harvest_out/` is gitignored, not committed).
-2. **Next:** add real host entries to `inventory/hosts.yml`, then
-   `ansible-playbook site.yml --check --limit <one-test-machine>` (dry run).
-3. Converge the one test machine for real, validate, then roll out in waves.
-
-Remaining TODO(harvest) (need a plugged-in device / the server, not the golden):
-generic UART-kit stable-symlink udev rule; server-side golden dataset layout;
-the xrdp `sesman.ini` clipboard wiring + `ssdpool/clipboard` automount.
-
-## Phases
-
-- **P1 – capture** (here) · **P2 – Ansible owns what varies** ·
-  **P3 – thin the image** · **P4 – image built by Ansible** (optional)
+The server VM (`cd108-server`, Ubuntu 26.04) is up and Ansible-managed; its hub
+services (apt-cacher-ng, NFS, ZFS golden store) are configured; the reference
+golden has been harvested into it. Next: add real lab hosts to the inventory and
+converge them in waves (see the runbooks). Longer term: bridge the server onto
+the lab LAN, and thin the Clonezilla image as Ansible takes over more.

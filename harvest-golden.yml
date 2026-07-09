@@ -1,0 +1,51 @@
+---
+# One-time (or occasional) harvest of the reference machine's live state into
+# the server's golden store. Snapshots the golden's datasets @{{ golden_snapshot }}
+# and zfs-send/recv's them to ssdpool/golden/* on the server, relayed through
+# this control node (which reaches both). Re-run it whenever the reference
+# machine is updated and you want a fresh golden.
+#
+#   ansible-playbook harvest-golden.yml
+#
+# The golden isn't Ansible-managed yet, so its sudo needs a password (prompted).
+# The server uses the passphrase-less deploy key + NOPASSWD sudo.
+- name: Harvest the reference machine into the server golden store
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_prompt:
+    - name: golden_become_pass
+      prompt: "sudo password on the golden (daelt@{{ golden_host }})"
+      private: true
+  vars:
+    golden_host: 103.0.2.13
+    golden_ssh: "-i ~/.ssh/id_rsa -o BatchMode=yes -o StrictHostKeyChecking=no daelt@{{ golden_host }}"
+    server_ssh: "-i ~/.ssh/id_cd108_ansible -o BatchMode=yes -o StrictHostKeyChecking=no daelt@{{ hostvars['cd108.tutu.eng.br'].ansible_host }}"
+    # src on the golden -> dst under the server's golden container. Homes are
+    # recursive (per-course + Downloads); windows carries its @ltspice baseline.
+    golden_sets:
+      - { src: "{{ zfs_pool_server }}/home", dst: "{{ zfs_pool_server }}/golden/home", recursive: true }
+      - { src: "{{ zfs_pool_server }}/windows", dst: "{{ zfs_pool_server }}/golden/windows", recursive: false }
+  tasks:
+    - name: (Re)snapshot the golden datasets @{{ golden_snapshot }}
+      shell: >
+        printf '%s\n' "{{ golden_become_pass }}" |
+        ssh {{ golden_ssh }} 'sudo -S -p "" sh -c "
+          zfs destroy -r {{ item.src }}@{{ golden_snapshot }} 2>/dev/null;
+          zfs snapshot {{ "-r" if item.recursive else "" }} {{ item.src }}@{{ golden_snapshot }}"'
+      loop: "{{ golden_sets }}"
+      no_log: true          # keep the sudo password out of logs
+
+    - name: Send each golden dataset to the server (relayed through the control node)
+      shell: >
+        printf '%s\n' "{{ golden_become_pass }}" |
+        ssh {{ golden_ssh }} 'sudo -S -p "" zfs send -R {{ item.src }}@{{ golden_snapshot }}' 2>/dev/null
+        | ssh {{ server_ssh }} 'sudo zfs recv -u {{ item.dst }}'
+      loop: "{{ golden_sets }}"
+      no_log: true
+
+    - name: Park the golden datasets under /mnt so they never shadow /home
+      shell: >
+        ssh {{ server_ssh }}
+        'sudo zfs set mountpoint=/mnt/{{ item.dst }} {{ item.dst }}'
+      loop: "{{ golden_sets }}"
