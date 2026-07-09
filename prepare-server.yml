@@ -1,0 +1,11 @@
+---
+# Focused converge of just the infra-hub services (apt-cacher-ng, NFS troca,
+# ZFS golden pool/sharenfs) onto the server VM — WITHOUT the heavy desktop/SDR
+# build that the full site.yml `server` play pulls in. Run:
+#
+#   ansible-playbook prepare-server.yml --check --diff   # dry run
+#   ansible-playbook prepare-server.yml                  # apply
+- name: Prepare the lab server (storage + hub services)
+  hosts: server
+  roles:
+    - server

@@ -24,9 +24,57 @@
   lineinfile:
     path: /etc/exports
     line: "{{ nfs_exchange_dir }} {{ nfs_export_clients }}(rw,sync,no_subtree_check)"
+    create: true
+    mode: "0644"
   notify: reload nfs exports
 
-# The server holds the golden ZFS datasets that students receive:
-#   {{ zfs_pool_server }}/golden/home/<course>   and   .../golden/windows
-# TODO(harvest): confirm those datasets exist here and are snapshotted
-#                ({{ golden_snapshot }}) before a reset run.
+# --- ZFS: the pool + container holding the golden datasets students receive -
+# The golden trees themselves (…/golden/home/<course>, …/golden/windows) are
+# populated by a one-time harvest from the reference machine (harvest-golden.yml),
+# then snapshotted @{{ golden_snapshot }}; roles/zfs sends them to students.
+- name: Install ZFS + stream buffer on the server
+  apt:
+    name: [zfsutils-linux, mbuffer]
+    state: present
+
+- name: Check whether the server pool exists
+  command: "zpool list -H -o name {{ zfs_pool_server }}"
+  register: srv_zpool
+  failed_when: false
+  changed_when: false
+  check_mode: false          # read-only; must run even in --check
+
+- name: Probe the server data device for an existing filesystem/signature
+  command: "blkid -p {{ server_zfs_device }}"
+  register: srv_blkid
+  failed_when: false
+  changed_when: false
+  check_mode: false          # read-only; must run even in --check
+
+# Cheap insurance: never zpool-create over a disk that already has data.
+- name: Refuse to create the server pool if the data device is not empty
+  fail:
+    msg: >-
+      {{ server_zfs_device }} already contains data ({{ srv_blkid.stdout }}).
+      Refusing to zpool create. Verify the disk before continuing.
+  when: srv_zpool.rc != 0 and srv_blkid.rc == 0
+
+- name: Create the server ZFS pool on the blank data disk
+  command: >-
+    zpool create -o ashift=12 -O compression=zstd
+    -O mountpoint=/mnt/{{ zfs_pool_server }} {{ zfs_pool_server }} {{ server_zfs_device }}
+  when: srv_zpool.rc != 0 and srv_blkid.rc != 0
+
+- name: Golden container dataset (parent of the per-course + windows goldens)
+  command: "zfs create -o mountpoint=/mnt/{{ zfs_pool_server }}/golden {{ zfs_pool_server }}/golden"
+  args:
+    creates: "/mnt/{{ zfs_pool_server }}/golden"
+
+# NFS-share the golden tree the ZFS way (matches the clipboard dataset). Children
+# inherit; students also pull via zfs send/recv over SSH (see roles/zfs).
+- name: NFS-share the golden datasets (sharenfs, scoped to the lab net)
+  community.general.zfs:
+    name: "{{ zfs_pool_server }}/golden"
+    state: present
+    extra_zfs_properties:
+      sharenfs: "{{ nfs_share_acl }}"

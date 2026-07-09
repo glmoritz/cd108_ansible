@@ -30,6 +30,12 @@ nfs_exchange_dir: /srv/troca
 # The lab subnet (IPv4 /19, confirmed on the server's eno1). ZFS `sharenfs`
 # datasets additionally scope to the IPv6 prefix 2801:82:c004:103::/64.
 nfs_export_clients: "103.0.0.0/19"
+# ZFS `sharenfs` ACL for datasets distributed over NFS (golden, clipboard).
+# IPv4 subnet only: it's an ACL by SUBNET (not per-host), so dynamic IPs are
+# fine, and every lab machine has an address in 103.0.0.0/19. IPv6 is dropped
+# here on purpose — zfs sharenfs → exportfs mangles bracketed IPv6 prefixes
+# ("Failed to resolve ..."); NFS rides IPv4 while SSH/Ansible use IPv6/EUI-64.
+nfs_share_acl: "rw=@103.0.0.0/19"
 
 # --- MATLAB: LOCAL install, campus NETWORK license (FlexLM) ---------------
 # The binary is image-owned at matlab_root; Ansible only writes the network
@@ -47,6 +53,7 @@ matlab_license_server: |
 zfs_pool: ssdpool                       # local pool name on each student machine
 zfs_data_device: /dev/disk/by-partlabel/zfs   # Clonezilla leaves this unformatted+labelled
 zfs_pool_server: ssdpool                # pool name ON the server holding the goldens
+server_zfs_device: /dev/vdb             # blank data disk on the server VM → the pool
 golden_snapshot: golden                 # snapshot name of the golden datasets
 # Overnight image sends run N machines AT A TIME and move to the next as each
 # finishes (Ansible task-level `throttle`) — NOT a bandwidth cap. To have more
