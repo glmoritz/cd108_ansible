@@ -111,6 +111,14 @@
 - name: Enable and start SSH
   apt: { name: openssh-server, state: present }
 
+# mDNS: with the hostname set (below) each box advertises <hostname>.local,
+# so the control node reaches it by name regardless of its DHCP-assigned IP.
+- name: Enable and start Avahi (mDNS name advertising)
+  ansible.builtin.systemd:
+    name: avahi-daemon
+    enabled: true
+    state: started
+
 - name: Install the professor's public key for passwordless admin SSH
   authorized_key:
     user: "{{ admin_user | default('daelt') }}"

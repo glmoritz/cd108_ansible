@@ -1,0 +1,26 @@
+# Addressing lab machines WITHOUT fixed IPs.
+#
+# The MAC (recorded per host in hosts.yml) is the stable identity. With IPv6
+# privacy extensions disabled (common role sets use_tempaddr=0), a host's
+# lower 64 bits are a deterministic EUI-64 derived from that MAC — so its
+# address is computable with no DHCP, DNS, mDNS, or registry server. This is
+# what breaks the "name it before you can reach it" bootstrap: a freshly
+# imaged clone (still carrying the golden's name) is reachable immediately by
+# its MAC-derived address.
+#
+#   * Set lab_ipv6_prefix to the router-advertised /64 and hosts are reached
+#     by their routable GLOBAL address (prefix + EUI-64) — works across
+#     subnets, matching the control node's own prefix.
+#   * Leave it empty to fall back to LINK-LOCAL (same L2 segment only), using
+#     the control node's uplink interface as the IPv6 zone id.
+#
+# A per-host ansible_host in hosts.yml (e.g. a pinned IPv4) overrides this.
+lab_ipv6_prefix: "2801:82:c004:103::"   # confirmed router-advertised /64; with
+                                        # privacy ext off (common role) a host's
+                                        # global addr = this + its EUI-64.
+lab_uplink_iface: eno1         # control-node NIC facing the labs (link-local only)
+
+ansible_host: >-
+  {{ (lab_ipv6_prefix ~ (mac | eui64_ifid))
+     if (lab_ipv6_prefix | length > 0)
+     else (mac | eui64_linklocal) ~ '%' ~ lab_uplink_iface }}

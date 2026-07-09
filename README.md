@@ -9,7 +9,8 @@ the *config layer* on top of a booted machine so next semester you edit text
 instead of clicking. Over time the image gets leaner and the playbook grows.
 
 - **Image owns:** ext4 Ubuntu partition, base OS, heavy proprietary/local
-  binaries for now (MATLAB at `/usr/local/MATLAB`, STM32CubeIDE, full TeX).
+  binaries for now (MATLAB at `/usr/local/MATLAB`, full TeX; the ST/SEGGER
+  stack — STM32CubeIDE/CubeMX, J-Link — rides in the received golden home).
 - **Ansible owns:** everything that varies or changes over time — *and* the
   **ZFS pool** (Clonezilla can't do ZFS), user homes, and lab-specific config.
 
@@ -79,7 +80,8 @@ roles/freeipa/            join FreeIPA (only freeipa_members)
 | home reset | reset-homes.yml | deliberate `zfs recv` of golden |
 | rtlsdr, pluto, sdr++, uhd, LibreSDR fw | sdr | your full procedure, idempotent |
 | matlab (network license) | matlab | **LOCAL** install; Ansible writes `network.lic` |
-| tex, STM32CubeIDE, ARM GCC, J-Link | common | **LOCAL** apt/opt (image-owned binaries), not NFS |
+| tex, stlink-tools, qucs-s | common | apt install (real packages) |
+| STM32CubeIDE/CubeMX, ST-Link server, J-Link | zfs (golden home) | image-owned binaries delivered in the received home; udev rules baked into the image |
 | NFS exchange "troca" folder | server | mode 1777 sticky = prof files undeletable |
 | freeipa join | freeipa | **only ca307**; domain/realm in group_vars/ca307.yml, secret in Vault |
 

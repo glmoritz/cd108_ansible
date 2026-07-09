@@ -20,7 +20,9 @@ apt_proxy_url: "http://{{ server_host }}:3142"
 
 # --- NFS: the public "troca" exchange folder (sticky-bit protected) -------
 nfs_exchange_dir: /srv/troca
-nfs_export_clients: "10.0.0.0/8"        # tighten to your lab subnet(s)
+# The lab subnet (IPv4 /19, confirmed on the server's eno1). ZFS `sharenfs`
+# datasets additionally scope to the IPv6 prefix 2801:82:c004:103::/64.
+nfs_export_clients: "103.0.0.0/19"
 
 # --- MATLAB: LOCAL install, campus NETWORK license (FlexLM) ---------------
 # The binary is image-owned at matlab_root; Ansible only writes the network
@@ -149,24 +151,26 @@ common_packages:
   - openocd
   - openssh-server
   - nfs-common
+  - avahi-daemon            # mDNS: advertises <hostname>.local so we address
+  - libnss-mdns             #   hosts by name, not by (unfixed) IP
   - netcat-openbsd          # `nc` — start-windows-vm.sh polls RDP with it
   - python3-pip
   - python3-venv
 
-# --- Heavy/local apps (image-owned binaries + apt; NOT served over NFS) ---
-# Confirmed local on the golden. TeX is a full local install; the embedded
-# toolchain is ST (STM32CubeIDE + ST-Link) + SEGGER J-Link + ARM GNU GCC.
-# The *-udev-rules packages ship the udev rules, so no custom rule needed for
-# ST-Link/J-Link (OpenOCD ships its own too).
+# --- Heavy/local apps -----------------------------------------------------
+# TeX is a full local apt install. The ST/SEGGER embedded stack (STM32CubeIDE,
+# CubeMX, ST-Link server, SEGGER J-Link) is NOT apt-installable — ST/SEGGER
+# ship installers/.debs, not apt repos. It's image-owned instead: the binaries
+# arrive in the received golden home (roles/zfs, same path as CubeMX), and the
+# device udev rules are baked into the Clonezilla-imaged /etc. So only the
+# genuinely packaged tools live here.
 tex_packages:
   - texlive-full
 embedded_packages:
-  - stlink-tools
-  - st-stlink-server
-  - st-stlink-udev-rules
-  - st-stm32cubeide-2.1.1
-  - segger-jlink-udev-rules
+  - stlink-tools             # open-source st-flash/st-util (real Ubuntu package)
   - qucs-s                   # from the ra3xdh OBS repo (see external repos)
+# NOTE: STM32CubeIDE/CubeMX + ST-Link server + SEGGER J-Link are delivered in
+# the received golden home, NOT installed by Ansible.
 
 # --- Virtualization: the Windows emergency VM + wine for lighter Win apps -
 virt_packages:
