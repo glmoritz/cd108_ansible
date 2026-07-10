@@ -179,12 +179,15 @@
       WantedBy=multi-user.target
   notify: restart phone-home receiver
 
+- name: Reload systemd so it sees the new receiver unit
+  ansible.builtin.systemd:
+    daemon_reload: true
+
 - name: Enable + start the boot-beacon receiver
   ansible.builtin.systemd:
     name: phone-home-receiver.service
     enabled: true
     state: started
-    daemon_reload: true
 
 # --- Auto-sleep: nightly scan-and-sleep of idle lab machines ---------------
 # A timer runs a script that probes each target and, if it answers, SSHes in as
@@ -277,9 +280,12 @@
         WantedBy=timers.target
   loop_control: { label: "{{ item.name }}" }
 
+- name: Reload systemd so it sees the new auto-sleep units
+  ansible.builtin.systemd:
+    daemon_reload: true
+
 - name: Enable the nightly auto-sleep timer ({{ 'on' if autosleep_enabled | bool else 'off' }})
   ansible.builtin.systemd:
     name: autosleep.timer
     enabled: "{{ autosleep_enabled | bool }}"
     state: "{{ 'started' if autosleep_enabled | bool else 'stopped' }}"
-    daemon_reload: true

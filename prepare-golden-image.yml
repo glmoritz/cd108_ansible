@@ -105,11 +105,14 @@
           [Install]
           WantedBy=multi-user.target
 
+    - name: Reload systemd so it sees the new regeneration unit
+      ansible.builtin.systemd:
+        daemon_reload: true
+
     - name: Enable the host-key regeneration unit
       ansible.builtin.systemd:
         name: regenerate-ssh-host-keys.service
         enabled: true
-        daemon_reload: true
 
     # --- final word (runs BEFORE we cut our own SSH session) ---------------
     - name: What to do now

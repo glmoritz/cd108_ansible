@@ -306,11 +306,14 @@
       [Install]
       WantedBy=multi-user.target
 
+- name: Reload systemd so it sees the new phone-home unit
+  ansible.builtin.systemd:
+    daemon_reload: true
+
 - name: Enable the boot beacon
   ansible.builtin.systemd:
     name: phone-home.service
     enabled: true
-    daemon_reload: true
 
 # --- Auto-sleep: let the hub trigger power actions over SSH -----------------
 # The nightly auto-sleep timer on the server SSHes in as {{ admin_user }} and
