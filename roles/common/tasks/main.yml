@@ -310,10 +310,13 @@
   ansible.builtin.systemd:
     daemon_reload: true
 
+# `--check` can't create the unit above, so enabling it would fail with
+# "Could not find the requested service" in a dry run — skip it there.
 - name: Enable the boot beacon
   ansible.builtin.systemd:
     name: phone-home.service
     enabled: true
+  when: not ansible_check_mode
 
 # --- Auto-sleep: let the hub trigger power actions over SSH -----------------
 # The nightly auto-sleep timer on the server SSHes in as {{ admin_user }} and

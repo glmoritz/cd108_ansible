@@ -113,6 +113,7 @@
       ansible.builtin.systemd:
         name: regenerate-ssh-host-keys.service
         enabled: true
+      when: not ansible_check_mode   # unit isn't really created under --check
 
     # --- final word (runs BEFORE we cut our own SSH session) ---------------
     - name: What to do now

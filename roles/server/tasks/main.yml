@@ -188,6 +188,7 @@
     name: phone-home-receiver.service
     enabled: true
     state: started
+  when: not ansible_check_mode   # unit isn't really created under --check
 
 # --- Auto-sleep: nightly scan-and-sleep of idle lab machines ---------------
 # A timer runs a script that probes each target and, if it answers, SSHes in as
@@ -289,3 +290,4 @@
     name: autosleep.timer
     enabled: "{{ autosleep_enabled | bool }}"
     state: "{{ 'started' if autosleep_enabled | bool else 'stopped' }}"
+  when: not ansible_check_mode   # units aren't really created under --check
