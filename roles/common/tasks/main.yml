@@ -139,6 +139,19 @@
 # image → every clone comes up reachable on first boot. Classic ssh.service is
 # more predictable for a fleet than socket activation (which also dropped our
 # session when host keys were removed during sysprep).
+# Ubuntu ships ssh SOCKET-activated (ssh.socket). Enabling ssh.service on top of
+# an enabled ssh.socket makes them fight over port 22 on boot, and sshd can come
+# up dead — which is why a converged clone refused SSH after a reboot. Use one
+# model: disable the socket, run the classic always-on sshd. More predictable for
+# a fleet (and it's what the golden's own pre-capture converge bakes in).
+- name: Disable socket-activated ssh (avoid the ssh.socket vs ssh.service clash)
+  ansible.builtin.systemd:
+    name: ssh.socket
+    enabled: false
+    state: stopped
+    masked: false
+  failed_when: false
+
 - name: Enable and start SSH (classic always-on sshd, baked into the image)
   ansible.builtin.systemd:
     name: ssh.service
@@ -230,6 +243,15 @@
 - name: Set the hostname from inventory
   ansible.builtin.hostname:
     name: "{{ inventory_hostname_short }}"
+
+# cloud-init re-applies the DHCP-provided hostname (lab-unknown-<id>) on EVERY
+# boot unless told to preserve — which reverts the name we just set. Pin it.
+- name: Stop cloud-init from resetting the hostname on boot
+  ansible.builtin.copy:
+    dest: /etc/cloud/cloud.cfg.d/99-preserve-hostname.cfg
+    content: "preserve_hostname: true\n"
+    mode: "0644"
+  # harmless no-op if cloud-init isn't installed
 
 # --- GRUB (headless, no grub-customizer) ---------------------------------
 - name: Configure GRUB defaults

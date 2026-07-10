@@ -92,9 +92,13 @@
   loop: "{{ discipline_users }}"
   loop_control: { label: "{{ item }}" }
 
-- name: Initial receive of course homes from the server (N at a time)
+# -p (properties) NOT -R (recursive): send the home dataset with its properties
+# but WITHOUT its Downloads child. Downloads is course junk (e.g. 8 GB in one
+# home) that must not ride to every machine — each gets a fresh empty Downloads
+# below. -R would drag it along.
+- name: Initial receive of course homes from the server (N at a time, no Downloads)
   shell: >-
-    zfs send -R {{ zfs_pool_server }}/golden/home/{{ item.item }}@{{ golden_snapshot }}
+    zfs send -p {{ zfs_pool_server }}/golden/home/{{ item.item }}@{{ golden_snapshot }}
     | mbuffer -q
     | ssh -i {{ deploy_key_on_server }} -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{ admin_user }}@{{ ansible_host | default(inventory_hostname) }} "zfs recv -u -F {{ zfs_pool }}/home/{{ item.item }}"
   delegate_to: "{{ server_host }}"
@@ -145,3 +149,27 @@
 - name: Mount all received home datasets (idempotent)
   command: "zfs mount -a"
   changed_when: false
+
+# Downloads is deliberately NOT synced from the golden (see the -p send above).
+# Give each course a fresh EMPTY Downloads dataset instead, owned by its user.
+- name: Which per-user Downloads datasets already exist?
+  command: "zfs list -H -o name {{ zfs_pool }}/home/{{ item }}/Downloads"
+  register: downloads_present
+  failed_when: false
+  changed_when: false
+  loop: "{{ discipline_users }}"
+  loop_control: { label: "{{ item }}" }
+
+- name: Create an empty Downloads dataset per course (not synced from golden)
+  command: "zfs create {{ zfs_pool }}/home/{{ item.item }}/Downloads"
+  when: item.rc != 0
+  loop: "{{ downloads_present.results }}"
+  loop_control: { label: "{{ item.item }}" }
+
+- name: Own each Downloads dir to its course user
+  ansible.builtin.file:
+    path: "/home/{{ item }}/Downloads"
+    state: directory
+    owner: "{{ item }}"
+    group: "{{ item }}"
+  loop: "{{ discipline_users }}"

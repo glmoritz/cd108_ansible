@@ -192,6 +192,8 @@ common_packages:
   - xournalpp
   - mosquitto-clients
   - moserial
+  - tio            # simple serial terminal (embedded UART work)
+  - minicom        # classic serial terminal
   - openocd
   - openssh-server
   - nfs-common
