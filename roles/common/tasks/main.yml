@@ -25,7 +25,7 @@
 # repos this role adds below as `.list` — apt then errors on the conflicting
 # Signed-By. Remove the golden's duplicates so the role's `.list` is the single
 # authoritative definition (idempotent; harmless once the golden is re-captured).
-- name: Remove golden-baked deb822 sources that duplicate role-managed repos
+- name: Remove golden-baked apt sources (role-managed duplicates + the dead ra3xdh repo)
   file:
     path: "/etc/apt/sources.list.d/{{ item }}"
     state: absent
@@ -33,6 +33,11 @@
     - docker.sources
     - google-chrome.sources
     - vscode.sources
+    # ra3xdh (Qucs-S): expired upstream OBS key breaks apt cache update; package
+    # is baked, so drop the repo entirely (both name variants the golden used).
+    - "home:ra3xdh.list"
+    - home_ra3xdh.list
+    - "home:ra3xdh.sources"
 
 # --- external repos (managed here so key/URL drift is a one-file fix) -----
 - name: Add VS Code repository key
@@ -74,19 +79,12 @@
     filename: google-chrome
     state: present
 
-# Qucs-S comes from the ra3xdh openSUSE Build Service repo (confirmed on golden).
-- name: Add the ra3xdh (Qucs-S) repository key
-  get_url:
-    url: https://download.opensuse.org/repositories/home:ra3xdh/xUbuntu_24.04/Release.key
-    dest: /etc/apt/keyrings/home_ra3xdh.asc
-    mode: "0644"
-  environment: { https_proxy: "{{ apt_proxy_url }}" }   # tunnel via the cacher (portal)
-
-- name: Add the ra3xdh (Qucs-S) apt repository
-  apt_repository:
-    repo: "deb [signed-by=/etc/apt/keyrings/home_ra3xdh.asc] https://download.opensuse.org/repositories/home:/ra3xdh/xUbuntu_24.04/ /"
-    filename: home_ra3xdh
-    state: present
+# Qucs-S (ra3xdh openSUSE Build Service repo) is BAKED in the golden (qucs-s
+# 26.1.1). We do NOT re-add the repo: its OBS signing key has EXPIRED upstream
+# (EXPKEYSIG 184B98BE3E68CD11), and while raw `apt-get update` only warns, the
+# Ansible apt module treats it as an error and fails the whole cache update. So
+# drop the repo (the package stays) and remove the golden's baked copy below.
+# Re-add it here if/when upstream renews the key and you want Qucs-S updates.
 
 # --- base packages (plain apt) -------------------------------------------
 - name: Preseed wireshark to allow non-root capture
