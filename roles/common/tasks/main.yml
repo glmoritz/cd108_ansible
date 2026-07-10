@@ -4,15 +4,17 @@
 # idiomatic Ansible path.
 
 # --- apt cache proxy -------------------------------------------------------
-# Matches the golden exactly: apt-cacher-ng only proxies http, so https is
-# disabled and IPv4 is forced. (The golden also had a redundant 99proxy; we
-# keep a single canonical 01proxy.)
+# HTTP repos are cached by apt-cacher-ng; HTTPS repos (docker/vscode/chrome/
+# opensuse/PPAs) are TUNNELLED through it (CONNECT passthrough — not cached) so
+# they go out via the server, which is authenticated past the campus captive
+# portal. Without this, clients behind the portal hang on every HTTPS repo. The
+# server must allow the tunnel — see PassThroughPattern in roles/server.
 - name: Route apt through the lab cache/proxy
   copy:
     dest: /etc/apt/apt.conf.d/01proxy
     content: |
       Acquire::http::Proxy "{{ apt_proxy_url }}";
-      Acquire::https::Proxy "false";
+      Acquire::https::Proxy "{{ apt_proxy_url }}";
       Acquire::ForceIPv4 "true";
   when: apt_proxy_url is defined and apt_proxy_url | length > 0
 
@@ -38,6 +40,7 @@
     url: https://packages.microsoft.com/keys/microsoft.asc
     dest: /etc/apt/keyrings/microsoft.asc
     mode: "0644"
+  environment: { https_proxy: "{{ apt_proxy_url }}" }   # tunnel via the cacher (portal)
 
 - name: Add VS Code apt repository
   apt_repository:
@@ -50,6 +53,7 @@
     url: https://download.docker.com/linux/ubuntu/gpg
     dest: /etc/apt/keyrings/docker.asc
     mode: "0644"
+  environment: { https_proxy: "{{ apt_proxy_url }}" }   # tunnel via the cacher (portal)
 
 - name: Add Docker apt repository
   apt_repository:
@@ -62,6 +66,7 @@
     url: https://dl.google.com/linux/linux_signing_key.pub
     dest: /etc/apt/keyrings/google-chrome.asc
     mode: "0644"
+  environment: { https_proxy: "{{ apt_proxy_url }}" }   # tunnel via the cacher (portal)
 
 - name: Add Google Chrome apt repository
   apt_repository:
@@ -75,6 +80,7 @@
     url: https://download.opensuse.org/repositories/home:ra3xdh/xUbuntu_24.04/Release.key
     dest: /etc/apt/keyrings/home_ra3xdh.asc
     mode: "0644"
+  environment: { https_proxy: "{{ apt_proxy_url }}" }   # tunnel via the cacher (portal)
 
 - name: Add the ra3xdh (Qucs-S) apt repository
   apt_repository:

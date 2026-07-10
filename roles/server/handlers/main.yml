@@ -7,3 +7,8 @@
     name: phone-home-receiver.service
     state: restarted
     daemon_reload: true
+
+- name: restart apt-cacher-ng
+  ansible.builtin.systemd:
+    name: apt-cacher-ng
+    state: restarted

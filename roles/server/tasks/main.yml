@@ -11,6 +11,26 @@
     state: present
     update_cache: true
 
+# Let apt-cacher-ng TUNNEL HTTPS (CONNECT passthrough) for the third-party repos
+# clients use. The clients point Acquire::https::Proxy at the cache (roles/common)
+# and the cache forwards to these hosts over its own authenticated link — the way
+# lab machines behind the captive portal reach HTTPS repos. Scoped to the known
+# repo hosts (NOT `.*`) so the cache isn't an open forward proxy / portal bypass.
+- name: Allow apt-cacher-ng to tunnel HTTPS for the third-party repos
+  copy:
+    dest: /etc/apt-cacher-ng/zz-https-passthrough.conf
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/server). CONNECT passthrough for HTTPS repos.
+      PassThroughPattern: (packages\.microsoft\.com|download\.docker\.com|dl\.google\.com|download\.opensuse\.org|ppa\.launchpadcontent\.net|ppa\.launchpad\.net):443$
+  notify: restart apt-cacher-ng
+
+- name: Ensure apt-cacher-ng is enabled and running
+  ansible.builtin.systemd:
+    name: apt-cacher-ng
+    enabled: true
+    state: started
+
 # Public free-for-all exchange folder. Mode 1777 = sticky bit: everyone can
 # create files, but you can only delete files YOU own — so a professor's files
 # can't be deleted by students. Same semantics as /tmp.
