@@ -129,6 +129,19 @@
   changed_when: false
   loop: "{{ discipline_users }}"
 
-- name: Ensure ssdpool/home is /home and mount all received datasets
-  shell: "zfs set mountpoint=/home {{ zfs_pool }}/home && zfs mount -a"
+# `zfs set mountpoint=/home` FORCES an unmount+remount, which fails ("pool or
+# dataset is busy") on a re-run once /home and its child home datasets are already
+# mounted. So only set it when it's actually wrong, then mount idempotently
+# (`zfs mount -a` mounts what's missing and skips what's already mounted).
+- name: Read ssdpool/home's current mountpoint
+  command: "zfs get -H -o value mountpoint {{ zfs_pool }}/home"
+  register: home_mountpoint
+  changed_when: false
+
+- name: Point ssdpool/home at /home (only if it isn't already — avoids a busy remount)
+  command: "zfs set mountpoint=/home {{ zfs_pool }}/home"
+  when: home_mountpoint.stdout | trim != '/home'
+
+- name: Mount all received home datasets (idempotent)
+  command: "zfs mount -a"
   changed_when: false
