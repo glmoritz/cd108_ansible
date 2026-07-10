@@ -19,6 +19,19 @@
 - name: Ensure apt keyrings dir exists
   file: { path: /etc/apt/keyrings, state: directory, mode: "0755" }
 
+# The golden bakes deb822 `.sources` for docker/chrome/vscode that define the SAME
+# repos this role adds below as `.list` — apt then errors on the conflicting
+# Signed-By. Remove the golden's duplicates so the role's `.list` is the single
+# authoritative definition (idempotent; harmless once the golden is re-captured).
+- name: Remove golden-baked deb822 sources that duplicate role-managed repos
+  file:
+    path: "/etc/apt/sources.list.d/{{ item }}"
+    state: absent
+  loop:
+    - docker.sources
+    - google-chrome.sources
+    - vscode.sources
+
 # --- external repos (managed here so key/URL drift is a one-file fix) -----
 - name: Add VS Code repository key
   get_url:
@@ -108,8 +121,53 @@
   user: { name: "{{ item }}", groups: docker, append: true }
   loop: "{{ docker_users }}"
 
-- name: Enable and start SSH
+- name: Install OpenSSH server
   apt: { name: openssh-server, state: present }
+
+# The golden shipped with ssh DISABLED (preset says enable, but it was turned
+# off), so fresh clones booted unreachable — and converge can't fix that after
+# the fact because converge needs ssh to connect. Force it enabled+started here
+# so the *golden's own converge* (before capture) bakes an enabled sshd into the
+# image → every clone comes up reachable on first boot. Classic ssh.service is
+# more predictable for a fleet than socket activation (which also dropped our
+# session when host keys were removed during sysprep).
+- name: Enable and start SSH (classic always-on sshd, baked into the image)
+  ansible.builtin.systemd:
+    name: ssh.service
+    enabled: true
+    state: started
+    masked: false
+
+# --- purge the legacy golden self-provisioning ------------------------------
+# The golden bakes a brittle first-boot self-restore (lab-zfs-restore.service +
+# /usr/local/bin/lab-zfs-restore.sh, which created the pool and pulled homes from
+# an http registry) plus its clipboard mount. Ansible owns pool-create + zfs recv
+# now (roles/zfs), so tear the old path out — it's enabled on every clone and
+# would race Ansible. Idempotent; also cleans the image after re-capture.
+- name: Disable the legacy self-restore units
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: false
+    state: stopped
+  loop:
+    - lab-zfs-restore.service
+    - mnt-cd108clipboard.mount
+  failed_when: false
+
+- name: Remove the legacy self-restore unit, script, and clipboard mount
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/lab-zfs-restore.service
+    - /usr/local/bin/lab-zfs-restore.sh
+    - /etc/systemd/system/mnt-cd108clipboard.mount
+  register: legacy_purge
+
+- name: Reload systemd after removing legacy units
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: legacy_purge is changed
 
 # mDNS: with the hostname set (below) each box advertises <hostname>.local,
 # so the control node reaches it by name regardless of its DHCP-assigned IP.
