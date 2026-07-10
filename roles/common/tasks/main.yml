@@ -40,7 +40,7 @@
 
 - name: Add Docker apt repository
   apt_repository:
-    repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+    repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu {{ ansible_facts.distribution_release }} stable"
     filename: docker
     state: present
 
@@ -203,3 +203,54 @@
 #   ST-Link/J-Link/OpenOCD rules come from their -udev-rules packages already;
 #   this is only for the generic serial kits. Needs idVendor/idProduct from a
 #   plugged-in kit: `udevadm info -a -n /dev/ttyUSB0 | grep -m2 'idVendor\|idProduct'`
+
+# --- Boot beacon (phone-home) ---------------------------------------------
+# Each machine POSTs its identity to the hub on boot so the fleet can be
+# reconciled against the static inventory (relocated / unknown / silent
+# machines). Best-effort — never blocks or fails the boot. The receiver lives
+# on the server (roles/server); reconcile with scripts/scan-beacons.py.
+- name: Install the boot-beacon reporter
+  copy:
+    dest: /usr/local/bin/phone-home
+    mode: "0755"
+    content: |
+      #!/usr/bin/env bash
+      # Boot beacon -> lab hub. Best-effort: never blocks or fails the boot.
+      set -u
+      URL="${PHONE_HOME_URL:-http://cd108.tutu.eng.br:8888/boot}"
+      host=$(hostname)
+      mid=$(cat /etc/machine-id 2>/dev/null || true)
+      ip=$(ip -o route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p' | head -1)
+      ts=$(date -Is)
+      macs=$(ip -o link show up 2>/dev/null \
+        | awk -F'link/ether ' '/link\/ether/{split($2,a," "); m[++n]=a[1]} \
+            END{s="["; for(i=1;i<=n;i++) s=s (i>1?",":"") "\"" m[i] "\""; print s "]"}')
+      [ -z "$macs" ] && macs="[]"
+      payload=$(printf '{"hostname":"%s","machine_id":"%s","macs":%s,"ip":"%s","ts":"%s"}' \
+        "$host" "$mid" "$macs" "$ip" "$ts")
+      curl -fsS --max-time 5 -H 'Content-Type: application/json' --data "$payload" "$URL" >/dev/null 2>&1 || true
+      exit 0
+
+- name: Install the boot-beacon systemd unit
+  copy:
+    dest: /etc/systemd/system/phone-home.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Phone home to the lab hub on boot (best-effort machine beacon)
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      Environment=PHONE_HOME_URL=http://{{ server_host }}:{{ phone_home_port | default(8888) }}/boot
+      ExecStart=/usr/local/bin/phone-home
+
+      [Install]
+      WantedBy=multi-user.target
+
+- name: Enable the boot beacon
+  ansible.builtin.systemd:
+    name: phone-home.service
+    enabled: true
+    daemon_reload: true

@@ -59,6 +59,19 @@ golden_snapshot: golden                 # snapshot name of the golden datasets
 # finishes (Ansible task-level `throttle`) — NOT a bandwidth cap. To have more
 # than N truly in flight, also raise `forks` in ansible.cfg to >= this.
 zfs_send_concurrency: 4
+# The zfs recv is PUSHED from the server over SSH as {{ admin_user }} using the
+# deploy key (the client already trusts it — no root SSH). This is that key's
+# path ON THE SERVER, which root reads when the send task is delegated there.
+deploy_key_on_server: "/home/{{ admin_user | default('daelt') }}/.ssh/id_cd108_ansible"
+
+# --- Boot beacon (phone-home) ---------------------------------------------
+# Each machine POSTs its identity (hostname/MACs/IP/machine-id) to the hub on
+# boot; the server (roles/server) logs one JSONL line per beacon so the fleet
+# can be reconciled against this static inventory — find relocated, unknown, or
+# silent machines. Best-effort, never blocks boot. Reconcile with
+# scripts/scan-beacons.py. The receiver only accepts POSTs from these subnets.
+phone_home_port: 8888
+phone_home_allowed: "103.0.0.0/19,192.168.122.0/24,127.0.0.0/8"
 
 # ZFS snapshots are managed by SANOID (installed with the pool). The golden had
 # sanoid installed with an EMPTY config (so nothing was actually snapshotting) —
@@ -141,7 +154,7 @@ clipboard_writers:
 # --- WoL: NIC supports it; enable magic-packet wake via a udev rule -------
 # NIC names vary per machine (eno1 / enp3s0 / eth0 …), so default to each
 # host's fact-discovered default-route interface. Override per host if needed.
-wol_interface: "{{ ansible_default_ipv4.interface | default('') }}"
+wol_interface: "{{ ansible_facts.default_ipv4.interface | default('') }}"
 
 # --- Packages that are plain apt installs ---------------------------------
 common_packages:
