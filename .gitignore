@@ -4,6 +4,9 @@ harvest_out/
 .vault_pass
 inventory/group_vars/**/vault.yml.plain
 
+# scratch testbed inventory (cd108-flashtest VM, not part of the fleet)
+flashtest-inv.yml
+
 # Python bytecode
 __pycache__/
 *.pyc
