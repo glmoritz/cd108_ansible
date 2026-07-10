@@ -12,6 +12,7 @@ Configuration management for ~50 Ubuntu machines across 4 research labs
 | **Test the first lab machine** (day-of checklist) | [`docs/first-lab-test.md`](docs/first-lab-test.md) |
 | **Capture a new golden image** (prep + Clonezilla) | [`docs/golden-image-prep.md`](docs/golden-image-prep.md) |
 | **Automate the imaging** (USB → recovery partition → PXE) | [`docs/imaging-automation.md`](docs/imaging-automation.md) |
+| **Auto-sleep idle machines at night** (spare a room/PC, change the time) | [`docs/autosleep.md`](docs/autosleep.md) |
 | **Fix something that broke** | [`docs/troubleshooting.md`](docs/troubleshooting.md) |
 
 New here? Read the architecture doc, then follow **Day one** in the runbooks.
