@@ -24,7 +24,7 @@ from datetime import datetime, timezone, timedelta
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INVENTORY = os.path.join(REPO, "inventory", "hosts.yml")
-SERVER = "cd108.tutu.eng.br"
+DEFAULT_SERVER = "cd108.tutu.eng.br"   # fallback only; normally read from inventory
 REMOTE_LOG = "/var/log/phone-home/beacons.jsonl"
 
 
@@ -60,15 +60,29 @@ def load_inventory(path):
     return mac2host
 
 
-def load_beacons(path):
+def inventory_server(path):
+    """SSH target for the hub: the server group's host (ansible_host if set)."""
+    try:
+        import yaml
+        data = yaml.safe_load(open(path)) or {}
+    except Exception:
+        return None
+    srv = ((((data.get("all") or {}).get("children") or {})
+            .get("server") or {}).get("hosts") or {})
+    for name, hv in srv.items():
+        return (hv or {}).get("ansible_host") or name
+    return None
+
+
+def load_beacons(path, server):
     """Return mac -> latest {recv_ts, hostname, src_ip} across all beacons."""
     if path:
         raw = open(path).read()
     else:
-        r = subprocess.run(["ssh", SERVER, f"sudo cat {REMOTE_LOG}"],
+        r = subprocess.run(["ssh", server, f"sudo cat {REMOTE_LOG}"],
                            capture_output=True, text=True)
         if r.returncode != 0:
-            sys.exit(f"could not read {REMOTE_LOG} on {SERVER}:\n{r.stderr.strip()}")
+            sys.exit(f"could not read {REMOTE_LOG} on {server}:\n{r.stderr.strip()}")
         raw = r.stdout
     latest = {}
     for line in raw.splitlines():
@@ -97,10 +111,12 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("beacons", nargs="?", help="local beacons.jsonl (default: ssh-pull from server)")
     ap.add_argument("--days", type=int, default=7, help="SILENT threshold in days (default 7)")
+    ap.add_argument("--server", help="ssh target for the hub (default: server group in the inventory)")
     args = ap.parse_args()
 
     mac2host = load_inventory(INVENTORY)
-    latest = load_beacons(args.beacons)
+    server = args.server or inventory_server(INVENTORY) or DEFAULT_SERVER
+    latest = load_beacons(args.beacons, server)
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(days=args.days)
 

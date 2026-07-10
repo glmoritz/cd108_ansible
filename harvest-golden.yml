@@ -20,7 +20,7 @@
   vars:
     golden_host: 103.0.2.13
     golden_ssh: "-i ~/.ssh/id_rsa -o BatchMode=yes -o StrictHostKeyChecking=no daelt@{{ golden_host }}"
-    server_ssh: "-i ~/.ssh/id_cd108_ansible -o BatchMode=yes -o StrictHostKeyChecking=no daelt@{{ hostvars['cd108.tutu.eng.br'].ansible_host }}"
+    server_ssh: "-i ~/.ssh/id_cd108_ansible -o BatchMode=yes -o StrictHostKeyChecking=no daelt@{{ hostvars[server_host].ansible_host }}"
     # src on the golden -> dst under the server's golden container. Homes are
     # recursive (per-course + Downloads); windows carries its @ltspice baseline.
     golden_sets:

@@ -217,7 +217,7 @@
       #!/usr/bin/env bash
       # Boot beacon -> lab hub. Best-effort: never blocks or fails the boot.
       set -u
-      URL="${PHONE_HOME_URL:-http://cd108.tutu.eng.br:8888/boot}"
+      URL="${PHONE_HOME_URL:-http://{{ server_host }}:{{ phone_home_port | default(8888) }}/boot}"
       host=$(hostname)
       mid=$(cat /etc/machine-id 2>/dev/null || true)
       ip=$(ip -o route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p' | head -1)
@@ -243,7 +243,6 @@
 
       [Service]
       Type=oneshot
-      Environment=PHONE_HOME_URL=http://{{ server_host }}:{{ phone_home_port | default(8888) }}/boot
       ExecStart=/usr/local/bin/phone-home
 
       [Install]
