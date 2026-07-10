@@ -68,12 +68,21 @@
 - name: Distribute + unpack the prebuilt SDR++ artifact
   when: inventory_hostname not in groups['server']
   block:
-    - name: Push the SDR++ artifact from the server (uses prof->student rsync)
-      synchronize:
-        src: "{{ sdr_dist_dir }}/sdrpp-dist.tar.gz"
-        dest: /tmp/sdrpp-dist.tar.gz
-        mode: push
+    # `synchronize` (rsync over ssh) delegated to the server HANGS on the first
+    # push to a student: it doesn't force BatchMode/StrictHostKeyChecking, so ssh
+    # blocks on the host-key prompt (or a password fallback) waiting for input.
+    # Use an explicit non-interactive rsync like the zfs push — server -> student
+    # as {{ admin_user }} with the deploy key, reaching it at {{ ansible_host }}.
+    - name: Push the SDR++ artifact from the server (prof->student rsync)
+      ansible.builtin.command:
+        argv:
+          - rsync
+          - "-e"
+          - "ssh -i {{ deploy_key_on_server }} -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10"
+          - "{{ sdr_dist_dir }}/sdrpp-dist.tar.gz"
+          - "{{ admin_user }}@{{ ansible_host | default(inventory_hostname) }}:/tmp/sdrpp-dist.tar.gz"
       delegate_to: "{{ server_host }}"
+      changed_when: true
 
     - name: Unpack the SDR++ artifact into place
       unarchive:
