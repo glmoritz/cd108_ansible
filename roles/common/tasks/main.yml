@@ -44,19 +44,8 @@
     - "home:ra3xdh.sources"
 
 # --- external repos (managed here so key/URL drift is a one-file fix) -----
-- name: Add VS Code repository key
-  get_url:
-    url: https://packages.microsoft.com/keys/microsoft.asc
-    dest: /etc/apt/keyrings/microsoft.asc
-    mode: "0644"
-  environment: { https_proxy: "{{ apt_proxy_url }}" }   # tunnel via the cacher (portal)
-
-- name: Add VS Code apt repository
-  apt_repository:
-    repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/microsoft.asc] https://packages.microsoft.com/repos/code stable main"
-    filename: vscode
-    state: present
-
+# Docker is used everywhere INCLUDING the hub; VS Code + Chrome are lab-workstation
+# apps, so those two repos skip the server.
 - name: Add Docker repository key
   get_url:
     url: https://download.docker.com/linux/ubuntu/gpg
@@ -70,18 +59,34 @@
     filename: docker
     state: present
 
-- name: Add Google Chrome repository key
-  get_url:
-    url: https://dl.google.com/linux/linux_signing_key.pub
-    dest: /etc/apt/keyrings/google-chrome.asc
-    mode: "0644"
-  environment: { https_proxy: "{{ apt_proxy_url }}" }   # tunnel via the cacher (portal)
+- name: Lab-workstation external repos (VS Code / Chrome — not the server)
+  when: "'server' not in group_names"
+  block:
+    - name: Add VS Code repository key
+      get_url:
+        url: https://packages.microsoft.com/keys/microsoft.asc
+        dest: /etc/apt/keyrings/microsoft.asc
+        mode: "0644"
+      environment: { https_proxy: "{{ apt_proxy_url }}" }   # tunnel via the cacher (portal)
 
-- name: Add Google Chrome apt repository
-  apt_repository:
-    repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.asc] https://dl.google.com/linux/chrome/deb/ stable main"
-    filename: google-chrome
-    state: present
+    - name: Add VS Code apt repository
+      apt_repository:
+        repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/microsoft.asc] https://packages.microsoft.com/repos/code stable main"
+        filename: vscode
+        state: present
+
+    - name: Add Google Chrome repository key
+      get_url:
+        url: https://dl.google.com/linux/linux_signing_key.pub
+        dest: /etc/apt/keyrings/google-chrome.asc
+        mode: "0644"
+      environment: { https_proxy: "{{ apt_proxy_url }}" }   # tunnel via the cacher (portal)
+
+    - name: Add Google Chrome apt repository
+      apt_repository:
+        repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.asc] https://dl.google.com/linux/chrome/deb/ stable main"
+        filename: google-chrome
+        state: present
 
 # Qucs-S (ra3xdh openSUSE Build Service repo) is BAKED in the golden (qucs-s
 # 26.1.1). We do NOT re-add the repo: its OBS signing key has EXPIRED upstream
@@ -97,6 +102,7 @@
     question: wireshark-common/install-setuid
     vtype: boolean
     value: "true"
+  when: "'server' not in group_names"
 
 - name: Install common packages
   apt:
@@ -104,30 +110,43 @@
     state: present
     update_cache: true
 
-- name: Install VS Code + Docker
+# Docker runs on every machine including the hub — install it unconditionally.
+- name: Install Docker
   apt:
-    name: [code, docker-ce, docker-ce-cli, containerd.io, docker-compose-plugin]
+    name: [docker-ce, docker-ce-cli, containerd.io, docker-compose-plugin]
     state: present
     update_cache: true
 
-# Heavy/local apps: image-owned binaries plus apt packages. The *-udev-rules
-# packages install the ST-Link / J-Link udev rules (no custom rule needed).
-- name: Install TeX, embedded toolchain, and virtualization stacks
-  apt:
-    name: "{{ tex_packages + embedded_packages + virt_packages }}"
-    state: present
+# --- lab-workstation software + course accounts (NOT the headless server) --
+# VS Code / TeX / embedded / virtualization stacks and the per-course unix
+# accounts are all for student workstations. The hub needs only the base + Docker
+# above, so skip this whole block on the server.
+- name: Lab workstation software and course accounts
+  when: "'server' not in group_names"
+  block:
+    - name: Install VS Code
+      apt:
+        name: [code]
+        state: present
+        update_cache: true
 
-# --- users ----------------------------------------------------------------
-- name: Create one user per discipline (homes land on the ZFS datasets)
-  user:
-    name: "{{ item }}"
-    shell: /bin/bash
-    create_home: true
-  loop: "{{ discipline_users }}"
+    # Heavy/local apps: image-owned binaries plus apt packages. The *-udev-rules
+    # packages install the ST-Link / J-Link udev rules (no custom rule needed).
+    - name: Install TeX, embedded toolchain, and virtualization stacks
+      apt:
+        name: "{{ tex_packages + embedded_packages + virt_packages }}"
+        state: present
 
-- name: Let course accounts use docker without sudo
-  user: { name: "{{ item }}", groups: docker, append: true }
-  loop: "{{ docker_users }}"
+    - name: Create one user per discipline (homes land on the ZFS datasets)
+      user:
+        name: "{{ item }}"
+        shell: /bin/bash
+        create_home: true
+      loop: "{{ discipline_users }}"
+
+    - name: Let course accounts use docker without sudo
+      user: { name: "{{ item }}", groups: docker, append: true }
+      loop: "{{ docker_users }}"
 
 - name: Install OpenSSH server
   apt: { name: openssh-server, state: present }
