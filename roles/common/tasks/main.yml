@@ -232,6 +232,11 @@
   loop:
     - { key: GRUB_TIMEOUT, value: "5" }
     - { key: GRUB_TIMEOUT_STYLE, value: menu }
+    # The machines dual-booted Windows once; a stale \EFI\Microsoft bootmgfw.efi
+    # lingers in the ESP and os-prober lists it as "Windows Boot Manager". There
+    # is no real Windows install (it's a VM now), so turn os-prober off to keep
+    # the menu clean — a plain Ubuntu boot with no phantom Windows entry.
+    - { key: GRUB_DISABLE_OS_PROBER, value: "true" }
   notify: update grub
 
 # --- system tweaks (exact values confirmed from the golden) --------------
