@@ -253,3 +253,17 @@
     name: phone-home.service
     enabled: true
     daemon_reload: true
+
+# --- Auto-sleep: let the hub trigger power actions over SSH -----------------
+# The nightly auto-sleep timer on the server SSHes in as {{ admin_user }} and
+# runs `sudo systemctl suspend`. Allow just the power verbs without a password
+# (scoped — not blanket sudo). See roles/server for the timer.
+- name: Allow the admin user to suspend/poweroff without a password (for the hub's auto-sleep)
+  copy:
+    dest: /etc/sudoers.d/30-autosleep
+    mode: "0440"
+    content: |
+      # Managed by Ansible (roles/common). Lets the hub's nightly auto-sleep
+      # timer sleep/shut this machine over SSH. Power verbs only.
+      {{ admin_user }} ALL=(root) NOPASSWD: /usr/bin/systemctl suspend, /usr/bin/systemctl poweroff, /usr/bin/systemctl hibernate, /usr/bin/systemctl suspend-then-hibernate
+    validate: /usr/sbin/visudo -cf %s

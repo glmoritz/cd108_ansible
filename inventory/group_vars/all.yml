@@ -73,6 +73,18 @@ deploy_key_on_server: "/home/{{ admin_user | default('daelt') }}/.ssh/id_cd108_a
 phone_home_port: 8888
 phone_home_allowed: "103.0.0.0/19,192.168.122.0/24,127.0.0.0/8"
 
+# --- Auto-sleep: a server-side timer suspends idle lab machines at night ----
+# The hub scans the fleet (targets rendered from this inventory), and for each
+# machine that answers it SSHes in as {{ admin_user }} (deploy key) and runs
+# `systemctl <action>`. Replaces the old per-machine midnight-sleep unit.
+autosleep_enabled: true
+autosleep_oncalendar: "*-*-* 00:00:00"   # systemd OnCalendar — nightly midnight
+autosleep_action: suspend                # suspend | poweroff | hibernate
+# Do NOT sleep these: whole rooms (ca307) + individually-tagged machines listed
+# in the `no_autosleep` inventory group (professor PCs). Edit those two, not the
+# role, to change what's spared.
+autosleep_exclude_groups: [ca307, no_autosleep]
+
 # ZFS snapshots are managed by SANOID (installed with the pool). The golden had
 # sanoid installed with an EMPTY config (so nothing was actually snapshotting) —
 # the zfs role now templates a real retention policy for the home datasets.
