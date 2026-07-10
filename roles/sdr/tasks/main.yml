@@ -65,8 +65,11 @@
         dest: "{{ sdr_dist_dir }}/sdrpp-dist.tar.gz"
 
 # ------------------ CLIENTS (labs): receive the prebuilt artifact ------------------
+# Skipped under --check: the push is a command task (not run in check mode), so
+# the tarball is never delivered and the unpack would fail on a missing source.
+# This produce-then-consume chain can only run for real.
 - name: Distribute + unpack the prebuilt SDR++ artifact
-  when: inventory_hostname not in groups['server']
+  when: inventory_hostname not in groups['server'] and not ansible_check_mode
   block:
     # `synchronize` (rsync over ssh) delegated to the server HANGS on the first
     # push to a student: it doesn't force BatchMode/StrictHostKeyChecking, so ssh
