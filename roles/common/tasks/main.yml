@@ -33,6 +33,10 @@
     - docker.sources
     - google-chrome.sources
     - vscode.sources
+    # ettus UHD PPA: golden bakes a deb822 .sources with an inline key that
+    # conflicts on Signed-By with the ppa: add in roles/sdr — drop the baked one
+    # so the sdr-managed source is authoritative.
+    - ettusresearch-ubuntu-uhd-noble.sources
     # ra3xdh (Qucs-S): expired upstream OBS key breaks apt cache update; package
     # is baked, so drop the repo entirely (both name variants the golden used).
     - "home:ra3xdh.list"

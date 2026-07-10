@@ -4,13 +4,12 @@
 # reliable way to satisfy the binary's shared-lib deps); only the compile and
 # the UHD image download happen on the server.
 
-# The Ettus UHD PPA is already BAKED in the golden (ettusresearch-ubuntu-uhd-noble
-# .sources, confirmed reachable), so we do NOT re-add it: `ppa:ettusresearch/uhd`
-# would (a) conflict on Signed-By with the baked source's inline key
-# ("Conflicting values set for option Signed-By"), and (b) fetch the key from
-# Launchpad's API — not one of the apt-cacher passthrough hosts, so it breaks
-# behind the captive portal. Re-add here (with a proxy-fetched keyring) only if a
-# future golden ships without it.
+# The ettus PPA is added HERE (the one authoritative place). The golden also bakes
+# its own copy (ettusresearch-ubuntu-uhd-noble.sources, inline key) — that baked
+# .sources conflicts with this one on Signed-By, so the common role's dedup removes
+# it (alongside docker/vscode/chrome), leaving this ppa: add as the single source.
+- name: Add Ettus Research UHD PPA
+  apt_repository: { repo: "ppa:ettusresearch/uhd", state: present }
 
 - name: Install SDR libraries + tools (all machines)
   apt:
