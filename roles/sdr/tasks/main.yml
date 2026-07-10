@@ -75,6 +75,23 @@
 - name: Distribute + unpack the prebuilt SDR++ artifact
   when: inventory_hostname not in groups['server'] and not ansible_check_mode
   block:
+    # The artifact is built in the SERVER play. A full site.yml run builds it
+    # before this play; but a client-only run (--limit <student>) skips the
+    # server, so it may not exist yet. Skip the distribution gracefully in that
+    # case instead of failing the whole converge.
+    - name: Is the SDR++ artifact built on the server?
+      ansible.builtin.stat:
+        path: "{{ sdr_dist_dir }}/sdrpp-dist.tar.gz"
+      delegate_to: "{{ server_host }}"
+      register: sdr_artifact
+
+    - name: Note that SDR++ hasn't been built yet (skipping distribution)
+      ansible.builtin.debug:
+        msg: >-
+          SDR++ artifact not on {{ server_host }} ({{ sdr_dist_dir }}/sdrpp-dist.tar.gz).
+          Build it by converging the server's sdr role, then re-converge this machine.
+      when: not sdr_artifact.stat.exists
+
     # `synchronize` (rsync over ssh) delegated to the server HANGS on the first
     # push to a student: it doesn't force BatchMode/StrictHostKeyChecking, so ssh
     # blocks on the host-key prompt (or a password fallback) waiting for input.
@@ -90,12 +107,14 @@
           - "{{ admin_user }}@{{ ansible_host | default(inventory_hostname) }}:/tmp/sdrpp-dist.tar.gz"
       delegate_to: "{{ server_host }}"
       changed_when: true
+      when: sdr_artifact.stat.exists
 
     - name: Unpack the SDR++ artifact into place
       unarchive:
         src: /tmp/sdrpp-dist.tar.gz
         dest: /
         remote_src: true
+      when: sdr_artifact.stat.exists
 
 # ------------------ launcher (all machines: built from source, no packaged one) --
 - name: Deploy the SDR++ desktop launcher
