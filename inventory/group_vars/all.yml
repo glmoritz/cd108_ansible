@@ -154,6 +154,18 @@ desktop_packages:
   - gnome-remote-desktop
   - freerdp2-x11
   - google-chrome-stable     # extra browser alongside the Firefox snap
+  # workstation GUI apps — moved out of common_packages so the headless server
+  # (which doesn't run the desktop role) stays lean.
+  - wireshark
+  - gparted
+  - gdebi
+  - meld
+  - qdirstat
+  - gimp
+  - inkscape
+  - pinta
+  - xournalpp
+  - moserial                 # GUI serial monitor (CLI tio/minicom are in common)
 
 # The professor's shared "clipboard": a persistent ssdpool/clipboard dataset,
 # writable only by members of this group, surfaced through xrdp's sesman.ini.
@@ -169,6 +181,10 @@ clipboard_writers:
 wol_interface: "{{ ansible_facts.default_ipv4.interface | default('') }}"
 
 # --- Packages that are plain apt installs ---------------------------------
+# Base CLI toolset for EVERY machine, including the headless server. GUI /
+# workstation apps live in desktop_packages (labs only) — keep this list lean so
+# the server doesn't drag in gimp/inkscape/gparted/... See site.yml: the server
+# play runs `common` but NOT `desktop`.
 common_packages:
   - build-essential
   - cmake
@@ -178,20 +194,10 @@ common_packages:
   - vim
   - net-tools
   - nmap
-  - wireshark
   - tcpdump
   - plocate
-  - gparted
-  - gdebi
   - ethtool
-  - meld
-  - qdirstat
-  - gimp
-  - inkscape
-  - pinta
-  - xournalpp
   - mosquitto-clients
-  - moserial
   - tio            # simple serial terminal (embedded UART work)
   - minicom        # classic serial terminal
   - openocd
