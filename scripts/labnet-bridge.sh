@@ -31,6 +31,8 @@ V6GW=2801:82:c004:103::1
 DONGLE=enxc8a362519eae
 # VMs to place on the bridge while UP (attached live only). Add/remove freely.
 VMS=(cd108-flashtest cd108-server)
+# Where we remember macvtap NICs we moved off the uplink, so `down` restores them.
+STATE=/run/labnet-bridge-macvtap.state
 # ---------------------------------------------------------------------------
 
 die()  { echo "ERROR: $*" >&2; exit 1; }
@@ -39,6 +41,52 @@ command -v ip >/dev/null   || die "iproute2 not found"
 
 have_bridge() { ip link show "$BRIDGE" &>/dev/null; }
 uplink_enslaved() { [[ "$(cat /sys/class/net/$UPLINK/master/uifindex 2>/dev/null; readlink -f /sys/class/net/$UPLINK/master 2>/dev/null | xargs -r basename)" == "$BRIDGE" ]]; }
+
+# A NIC can't be enslaved to a bridge while it has a macvtap child, so any VM
+# using macvtap on the uplink (e.g. ipa2) blocks `up` with EBUSY. Move those onto
+# the bridge with their ORIGINAL MAC (guest keeps its IP; same campus L2), and
+# remember them so `down` puts the macvtap back.
+iface_mode() {   # $1=vm $2=mac -> the <source mode=...> of that interface
+  virsh dumpxml "$1" 2>/dev/null | python3 -c "
+import sys,xml.etree.ElementTree as ET
+r=ET.parse(sys.stdin).getroot()
+for i in r.iter('interface'):
+    m=i.find('mac'); s=i.find('source')
+    if m is not None and m.get('address')=='$2' and s is not None and s.get('mode'):
+        print(s.get('mode')); break" 2>/dev/null
+}
+
+migrate_macvtaps() {
+  command -v virsh >/dev/null || return
+  : > "$STATE"
+  local vm mac model mode
+  for vm in $(virsh list --name 2>/dev/null); do
+    [[ -n "$vm" ]] || continue
+    while read -r mac model; do
+      [[ -n "$mac" ]] || continue
+      mode=$(iface_mode "$vm" "$mac"); mode=${mode:-bridge}
+      echo "$vm $mac $mode ${model:-virtio}" >> "$STATE"
+      info "moving $vm macvtap $mac off $UPLINK -> $BRIDGE (stays on campus)"
+      virsh detach-interface "$vm" --type direct --mac "$mac" --live || true
+      virsh attach-interface "$vm" --type bridge --source "$BRIDGE" --mac "$mac" --model "${model:-virtio}" --live || true
+    done < <(virsh domiflist "$vm" 2>/dev/null | awk -v u="$UPLINK" '$2=="direct" && $3==u {print $5, $4}')
+  done
+}
+
+restore_macvtaps() {   # reverse migrate_macvtaps; needs $UPLINK free of the bridge
+  [[ -f "$STATE" ]] || return
+  command -v virsh >/dev/null || return
+  local vm mac mode model
+  while read -r vm mac mode model; do
+    [[ -n "$vm" ]] || continue
+    info "restoring $vm macvtap $mac on $UPLINK (mode $mode)"
+    virsh detach-interface "$vm" --type bridge --mac "$mac" --live 2>/dev/null || true
+    virsh attach-interface "$vm" --type direct --source "$UPLINK" --mode "${mode:-bridge}" \
+      --mac "$mac" --model "${model:-virtio}" --live \
+      || info "  (could not reattach macvtap for $vm — reboot $vm to restore)"
+  done < "$STATE"
+  rm -f "$STATE"
+}
 
 attach_vms() {
   command -v virsh >/dev/null || { info "no virsh, skipping VM attach"; return; }
@@ -71,9 +119,10 @@ rollback() {
   info "rolling back partial bridge setup..."
   ip link set "$UPLINK" nomaster 2>/dev/null || true
   [[ -n "$DONGLE" ]] && ip link set "$DONGLE" nomaster 2>/dev/null || true
+  restore_macvtaps
   have_bridge && { ip addr flush dev "$BRIDGE" 2>/dev/null || true; ip link del "$BRIDGE" 2>/dev/null || true; }
   nmcli dev set "$UPLINK" managed yes 2>/dev/null || true
-  info "rolled back — the host NIC should return to normal (or reboot)."
+  info "rolled back — the host NIC and macvtap VMs should return to normal (or reboot)."
 }
 
 up() {
@@ -90,6 +139,9 @@ up() {
   ip link set "$BRIDGE" address "$UPLINK_MAC" || true   # same MAC as the uplink
   nmcli dev set "$BRIDGE" managed no 2>/dev/null || true
   ip link set "$BRIDGE" up
+
+  info "clearing macvtap NICs off $UPLINK (they block enslaving it)"
+  migrate_macvtaps
 
   info "moving $UPLINK into $BRIDGE and relocating the host IP"
   ip addr flush dev "$UPLINK"
@@ -135,6 +187,8 @@ down() {
     ip addr add "$V4" dev "$UPLINK" 2>/dev/null || true
     ip route replace default via "$V4GW" dev "$UPLINK" 2>/dev/null || true
   fi
+  info "restoring macvtap VMs onto $UPLINK"
+  restore_macvtaps
   echo; status
   echo; info "DOWN. Normal setup restored."
 }
