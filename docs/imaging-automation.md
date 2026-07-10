@@ -19,10 +19,12 @@ Clonezilla Live reads **boot-time parameters** that let it run fully unattended
   ocs_prerun2="/home/partimag/layout-disk.sh"   # sgdisk: ESP + ext4 + zfs=rest
   ```
 - **`ocs_live_run`** — the batch restore. `-batch` = no questions. Because the
-  image is *system partitions only*, we `restoreparts` (not `restoredisk`), and
-  `-r` resizes the restored ext4 to its partition:
+  image is *system partitions only*, we `restoreparts` (not `restoredisk`); `-k`
+  says "the table already exists" (our `ocs_prerun` sgdisk built it), and `-r`
+  grows the restored ext4 to fill its partition. Name **all three** captured
+  partitions — `restoreparts` restores each to the target of the same name:
   ```
-  ocs_live_run="ocs-sr -batch -r -j2 -p reboot restoreparts <image> <esp> <root>"
+  ocs_live_run="ocs-sr -batch -k -r -p reboot restoreparts <image> sda1 sda3 sda7"
   ```
 
 Set the boot menu to auto-select that entry with a short timeout and you get:
@@ -38,17 +40,22 @@ with a fixed head and the `zfs` partition (always **last**) taking whatever is
 left:
 
 ```bash
-# layout-disk.sh — runs in ocs_prerun, sizes the zfs partition to THIS disk
+# layout-disk.sh — runs in ocs_prerun, sizes the zfs partition to THIS disk.
+# The partition NUMBERS must match the captured image (golden = sda1/sda3/sda7),
+# because Clonezilla `restoreparts` restores each saved partition to the target
+# of the SAME name. GPT allows this non-sequential numbering; the gap where the
+# golden's MSR (sda2) sat is simply left unused.
 DISK=/dev/sda                       # detect the internal disk at runtime
 sgdisk --zap-all "$DISK"
-sgdisk -n1:0:+100M -t1:ef00 -c1:ESP      "$DISK"   # EFI (exact golden size)
-sgdisk -n2:0:+190G -t2:8300 -c2:root     "$DISK"   # ext4 root (golden's size)
-sgdisk -n3:0:+4G   -t3:0700 -c3:recovery "$DISK"   # Clonezilla recovery slot
-sgdisk -n4:0:0     -t4:bf00 -c4:zfs      "$DISK"   # ZFS = ALL remaining space
+sgdisk -n1:0:+100M -t1:ef00 -c1:ESP      "$DISK"   # sda1  EFI (exact golden size)
+sgdisk -n3:0:+190G -t3:8300 -c3:root     "$DISK"   # sda3  ext4 root (golden's size)
+sgdisk -n7:0:+4G   -t7:0700 -c7:recovery "$DISK"   # sda7  Clonezilla recovery slot
+sgdisk -n4:0:0     -t4:bf00 -c4:zfs      "$DISK"   # sda4  ZFS = ALL remaining space
 ```
 
-`restoreparts` writes the ESP, ext4 root, and recovery images into `p1`–`p3`
-(ext4 restores at its exact size — no shrink). Partition `p4` is left empty but
+`restoreparts` writes the ESP, ext4 root, and recovery images into `sda1`,
+`sda3`, `sda7` (ext4 restores at its exact size, then `-r` grows it to the
+partition — no shrink). Partition `sda4` is left empty but
 **labelled `zfs`**, so `/dev/disk/by-partlabel/zfs` resolves and Ansible's
 `zpool create` fills it — a 256 GB SSD → ~60 GB pool, a 1 TB → ~800 GB pool,
 **same image**. This is ZFS's "use the whole disk" doing the size-adaptation for

@@ -119,14 +119,16 @@ the `zfs` tail varies:
 ```bash
 DISK=/dev/sda
 sgdisk --zap-all "$DISK"
-sgdisk -n1:0:+100M -t1:ef00 -c1:ESP      "$DISK"
-sgdisk -n2:0:+190G -t2:8300 -c2:root     "$DISK"
-sgdisk -n3:0:+4G   -t3:0700 -c3:recovery "$DISK"
-sgdisk -n4:0:0     -t4:bf00 -c4:zfs      "$DISK"   # zfs = all remaining (≥ ~210 GB disk)
+# Numbers must match the captured image (golden = sda1/sda3/sda7) — Clonezilla
+# restoreparts restores each saved partition to the target of the SAME name.
+sgdisk -n1:0:+100M -t1:ef00 -c1:ESP      "$DISK"   # sda1  EFI
+sgdisk -n3:0:+190G -t3:8300 -c3:root     "$DISK"   # sda3  ext4 root
+sgdisk -n7:0:+4G   -t7:0700 -c7:recovery "$DISK"   # sda7  Clonezilla recovery
+sgdisk -n4:0:0     -t4:bf00 -c4:zfs      "$DISK"   # sda4  zfs = all remaining (≥ ~210 GB disk)
 ```
 
-`restoreparts` writes ESP/root/recovery into `p1`–`p3`; Ansible builds `ssdpool`
-on the empty labelled `p4`. **No GRUB/EFI surgery needed** — verified on the
+`restoreparts <image> sda1 sda3 sda7` writes ESP/root/recovery into `sda1`/`sda3`/`sda7`;
+Ansible builds `ssdpool` on the empty labelled `sda4`. **No GRUB/EFI surgery needed** — verified on the
 golden: `fstab` and the ESP grub stub both resolve root by **fs-UUID** (which
 `partclone` preserves), and the ESP already has the removable `\EFI\Boot\bootx64.efi`
 fallback, so clones boot with an empty EFI NVRAM. Full roadmap:

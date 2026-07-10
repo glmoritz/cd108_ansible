@@ -204,14 +204,17 @@ Keep the master image small by excluding the ZFS data partition.
    ```bash
    DISK=/dev/sda
    sgdisk --zap-all "$DISK"
-   sgdisk -n1:0:+100M -t1:ef00 -c1:ESP      "$DISK"   # EFI (exact golden size)
-   sgdisk -n2:0:+190G -t2:8300 -c2:root     "$DISK"   # ext4 root (golden's size)
-   sgdisk -n3:0:+4G   -t3:0700 -c3:recovery "$DISK"   # Clonezilla recovery
-   sgdisk -n4:0:0     -t4:bf00 -c4:zfs      "$DISK"   # zfs = all remaining space
+   # Numbers match the captured image (golden = sda1/sda3/sda7): restoreparts
+   # restores each saved partition to the target of the SAME name.
+   sgdisk -n1:0:+100M -t1:ef00 -c1:ESP      "$DISK"   # sda1  EFI (exact golden size)
+   sgdisk -n3:0:+190G -t3:8300 -c3:root     "$DISK"   # sda3  ext4 root (golden's size)
+   sgdisk -n7:0:+4G   -t7:0700 -c7:recovery "$DISK"   # sda7  Clonezilla recovery
+   sgdisk -n4:0:0     -t4:bf00 -c4:zfs      "$DISK"   # sda4  zfs = all remaining space
    ```
    Needs a disk ≥ ~210 GB. Re-imaging a machine that already has this layout?
    Skip this — just reuse it.
-4. **`restoreparts`** the ESP + ext4 root + recovery partitions onto the target.
+4. **`restoreparts <image> sda1 sda3 sda7`** — writes the ESP + ext4 root +
+   recovery images onto the same-named targets (with `-k -r`).
    Do **not** write the `zfs` partition — it stays empty+labelled and Ansible
    (re)builds the pool on it. It boots with no GRUB/EFI surgery: `fstab` and the
    ESP grub stub are UUID-based (`partclone` preserves UUIDs) and the ESP carries
@@ -236,12 +239,18 @@ Then, in Clonezilla:
 
 1. Boot the (already-generalized) reference machine into Clonezilla.
 2. `device-image` → mount the NFS repo (`103.0.1.16:/mnt/ssdpool/cd108_images`) →
-   **Expert** → **`saveparts`**, selecting **only the EFI/ESP + ext4 root**
-   partitions and leaving the `zfs`/`ssdpool` partition **unticked**. Clonezilla
-   still records the disk's partition table, so on restore the `zfs` partition
-   comes back **empty and labelled**. The homes/Windows VM are received separately
-   by the `zfs` role, not by Clonezilla.
+   **Expert** → **`saveparts`**, selecting the **EFI/ESP + ext4 root + Clonezilla
+   recovery** partitions (`sda1`, `sda3`, `sda7`) and leaving the `zfs`/`ssdpool`
+   partition (`sda4`) **unticked**. Clonezilla still records the disk's partition
+   table, so on restore the `zfs` partition comes back **empty and labelled**. The
+   homes/Windows VM are received separately by the `zfs` role, not by Clonezilla.
 3. The image lands on the NFS repo so restores can pull it from there.
+
+> **Can't boot Clonezilla?** Any live Linux with the `clonezilla` + `partclone`
+> packages captures an identical image: `apt install clonezilla partclone nfs-common`,
+> mount the repo at `/home/partimag`, unmount the target partitions, then
+> `ocs-sr -q2 -z1p -senc -sfsck -p true -batch saveparts <image> "sda1 sda3 sda7"`.
+> This is how `cd108-golden-2026-07-09` was captured.
 
 > Confirm the partitions against the golden's `lsblk` before ticking — the
 > principle (system partitions in the image, `zfs` partition out and empty) is
