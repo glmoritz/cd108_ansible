@@ -8,8 +8,23 @@
 # its own copy (ettusresearch-ubuntu-uhd-noble.sources, inline key) — that baked
 # .sources conflicts with this one on Signed-By, so the common role's dedup removes
 # it (alongside docker/vscode/chrome), leaving this ppa: add as the single source.
-- name: Add Ettus Research UHD PPA
-  apt_repository: { repo: "ppa:ettusresearch/uhd", state: present }
+#
+# BEST-EFFORT: `ppa:` fetches the signing key from hkp://keyserver.ubuntu.com:80,
+# which the campus captive portal blocks ("Unable to get required signing key").
+# Don't fail the converge on it — UHD is also in Ubuntu universe, and where the
+# golden baked the repo it already works. TODO: bundle the ettus key in
+# roles/sdr/files and add via signed-by so it's portal-independent.
+- name: Add Ettus Research UHD PPA (best-effort — keyserver may be portal-blocked)
+  block:
+    - name: Add Ettus Research UHD PPA
+      apt_repository: { repo: "ppa:ettusresearch/uhd", state: present }
+  rescue:
+    - name: Note the ettus PPA could not be added
+      ansible.builtin.debug:
+        msg: >-
+          Could not add ppa:ettusresearch/uhd (signing-key fetch failed — keyserver
+          blocked by the captive portal). Continuing; UHD comes from Ubuntu universe
+          or the golden's baked repo. Bundle the key for a portal-independent fix.
 
 - name: Install SDR libraries + tools (all machines)
   apt:
