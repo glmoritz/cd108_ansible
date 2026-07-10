@@ -58,30 +58,77 @@
 # (task `throttle`): as each host finishes its receive, the next one starts.
 # mbuffer is a plain stream buffer here (decouples send/recv over ssh) — no
 # rate cap. Course homes carry their `Downloads` child, so the send is -R.
+# Recv targets are ssdpool/home/<user>, so the parent dataset must exist first —
+# the pool root exists, but ssdpool/home does not on a fresh clone.
+- name: Does the parent home dataset exist?
+  command: "zfs list -H -o name {{ zfs_pool }}/home"
+  register: home_parent
+  failed_when: false
+  changed_when: false
+
+- name: Create the parent home dataset (mounted at /home)
+  command: "zfs create -o mountpoint=/home {{ zfs_pool }}/home"
+  when: home_parent.rc != 0
+
+# --- server → client push transport ---------------------------------------
+# The recv is pushed from the server: `zfs send | ssh <client> "zfs recv"`. The
+# naive form sshed to the bare inventory name (unresolvable) as root with no key.
+# Instead reach the client at {{ ansible_host }} as {{ admin_user }} with the
+# deploy key it already trusts, and delegate recv to {{ admin_user }} on the
+# client via `zfs allow` — no root SSH. Non-root can't MOUNT on Linux, so recv
+# with -u and let root set mountpoints + mount afterwards.
+- name: Let {{ admin_user }} receive into the pool (delegated, so the push needs no root SSH)
+  command: >
+    zfs allow -u {{ admin_user }}
+    create,receive,mount,mountpoint,userprop,snapshot,hold,destroy,rollback
+    {{ zfs_pool }}
+  changed_when: false
+
+- name: Which course homes are already received?
+  command: "zfs list -H -o name {{ zfs_pool }}/home/{{ item }}"
+  register: home_present
+  failed_when: false
+  changed_when: false
+  loop: "{{ discipline_users }}"
+  loop_control: { label: "{{ item }}" }
+
 - name: Initial receive of course homes from the server (N at a time)
-  shell: >
-    zfs send -R {{ zfs_pool_server }}/golden/home/{{ item }}@{{ golden_snapshot }}
+  shell: >-
+    zfs send -R {{ zfs_pool_server }}/golden/home/{{ item.item }}@{{ golden_snapshot }}
     | mbuffer -q
-    | ssh {{ inventory_hostname }} "zfs recv -F {{ zfs_pool }}/home/{{ item }}"
+    | ssh -i {{ deploy_key_on_server }} -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{ admin_user }}@{{ ansible_host | default(inventory_hostname) }} "zfs recv -u -F {{ zfs_pool }}/home/{{ item.item }}"
   delegate_to: "{{ server_host }}"
   throttle: "{{ zfs_send_concurrency }}"
-  args:
-    creates: "/home/{{ item }}"
+  when: item.rc != 0
+  loop: "{{ home_present.results }}"
+  loop_control: { label: "{{ item.item }}" }
+
+- name: Is the Windows emergency VM already received?
+  command: "zfs list -H -o name {{ zfs_pool }}/windows"
+  register: win_present
+  failed_when: false
+  changed_when: false
+
+# -R (replication stream) so ALL the windows snapshots ride along — critically
+# @{{ winvm_revert_snapshot | default('ltspice') }}, the clean baseline the winvm
+# role reverts to. A plain send of @golden would ship only that one snapshot and
+# the revert wiring would fail ("clean-baseline snapshot does not exist").
+- name: Initial receive of the Windows emergency VM (with its snapshots)
+  shell: >-
+    zfs send -R {{ zfs_pool_server }}/golden/windows@{{ golden_snapshot }}
+    | mbuffer -q
+    | ssh -i {{ deploy_key_on_server }} -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{ admin_user }}@{{ ansible_host | default(inventory_hostname) }} "zfs recv -u -F {{ zfs_pool }}/windows"
+  delegate_to: "{{ server_host }}"
+  when: win_present.rc != 0
+
+# The golden's home datasets carry explicit mountpoints (…/golden/home/<user>);
+# reset them to inherit so they land at /home/<course>, then mount (root — recv
+# ran with -u because non-root can't mount on Linux).
+- name: Reset received homes to inherit the /home mountpoint
+  command: "zfs inherit -r mountpoint {{ zfs_pool }}/home/{{ item }}"
+  changed_when: false
   loop: "{{ discipline_users }}"
 
-- name: Initial receive of the Windows emergency VM (N at a time)
-  shell: >
-    zfs send {{ zfs_pool_server }}/golden/windows@{{ golden_snapshot }}
-    | mbuffer -q
-    | ssh {{ inventory_hostname }} "zfs recv -F {{ zfs_pool }}/windows"
-  delegate_to: "{{ server_host }}"
-  throttle: "{{ zfs_send_concurrency }}"
-  args:
-    creates: "/{{ zfs_pool }}/windows"
-
-# The parent ssdpool/home dataset is mounted at /home; per-user datasets inherit
-# to /home/<course>. The recursive send should carry the golden's `mountpoint`
-# props; this makes the /home mount explicit in case a fresh recv differs.
-- name: Ensure ssdpool/home is mounted at /home
-  command: "zfs set mountpoint=/home {{ zfs_pool }}/home"
+- name: Ensure ssdpool/home is /home and mount all received datasets
+  shell: "zfs set mountpoint=/home {{ zfs_pool }}/home && zfs mount -a"
   changed_when: false
