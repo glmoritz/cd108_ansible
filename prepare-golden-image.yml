@@ -74,6 +74,30 @@
         rm -rf /tmp/* /var/tmp/* ; :
       changed_when: true
 
+    # --- strip golden /mnt leftovers ---------------------------------------
+    # The golden accreted personal/backup junk under /mnt (a 460M bk_home, a
+    # personal clipboard dir, a stray MATLAB_ISO mountpoint). These are NOT ZFS
+    # mountpoints (the windows dataset lives at /mnt/ssdpool/golden/windows and
+    # the student clipboard mount is /mnt/cd108clipboard — both preserved). Only
+    # the explicit junk paths below are removed, so nothing active gets clobbered.
+    - name: Remove golden /mnt junk (explicit paths only — never a blanket rm)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ golden_mnt_junk | default(['/mnt/bk_home', '/mnt/moritz-clipboard', '/mnt/MATLAB_ISO']) }}"
+
+    # --- ship EMPTY Downloads ----------------------------------------------
+    # The golden's home datasets carry gigabytes of Downloads (e.g.
+    # microcontroladores/Downloads ~8G). Policy: Downloads is scratch and must be
+    # empty on a fresh machine (the zfs role also excludes it from send + recreates
+    # it empty). Empty the content here so the captured image doesn't haul it.
+    # -mindepth 1 keeps the directory (and its dataset) but drops everything in it.
+    - name: Empty each account's Downloads before capture
+      ansible.builtin.shell: >-
+        find /home/{{ item }}/Downloads -mindepth 1 -delete 2>/dev/null; :
+      loop: "{{ [admin_user] + discipline_users }}"
+      changed_when: true
+
     # --- generalize identity: unique per clone on next boot ----------------
     # machine-id: empty file → systemd generates a fresh one at boot. Removing
     # the dbus symlink target avoids a stale copy.

@@ -184,6 +184,11 @@
 # an http registry) plus its clipboard mount. Ansible owns pool-create + zfs recv
 # now (roles/zfs), so tear the old path out — it's enabled on every clone and
 # would race Ansible. Idempotent; also cleans the image after re-capture.
+#
+# It also bakes set-hostname.service → /usr/local/bin/set-hostname-from-mac.sh,
+# which reruns EVERY boot and overwrites the Ansible-set hostname with
+# "lab-unknown-<macs>" (cloud-init is disabled here, so that was never the cause).
+# Ansible sets the hostname declaratively below, so purge this too.
 - name: Disable the legacy self-restore units
   ansible.builtin.systemd:
     name: "{{ item }}"
@@ -192,6 +197,7 @@
   loop:
     - lab-zfs-restore.service
     - mnt-cd108clipboard.mount
+    - set-hostname.service
   failed_when: false
 
 - name: Remove the legacy self-restore unit, script, and clipboard mount
@@ -202,6 +208,8 @@
     - /etc/systemd/system/lab-zfs-restore.service
     - /usr/local/bin/lab-zfs-restore.sh
     - /etc/systemd/system/mnt-cd108clipboard.mount
+    - /etc/systemd/system/set-hostname.service
+    - /usr/local/bin/set-hostname-from-mac.sh
   register: legacy_purge
 
 - name: Reload systemd after removing legacy units
@@ -263,14 +271,15 @@
   ansible.builtin.hostname:
     name: "{{ inventory_hostname_short }}"
 
-# cloud-init re-applies the DHCP-provided hostname (lab-unknown-<id>) on EVERY
-# boot unless told to preserve — which reverts the name we just set. Pin it.
+# The real reverter is the golden's set-hostname.service (purged above). This is
+# just belt-and-suspenders in case cloud-init is ever re-enabled — it's disabled
+# on the current golden, so this file has no effect today.
 - name: Stop cloud-init from resetting the hostname on boot
   ansible.builtin.copy:
     dest: /etc/cloud/cloud.cfg.d/99-preserve-hostname.cfg
     content: "preserve_hostname: true\n"
     mode: "0644"
-  # harmless no-op if cloud-init isn't installed
+  # harmless no-op if cloud-init isn't installed / disabled
 
 # --- GRUB (headless, no grub-customizer) ---------------------------------
 - name: Configure GRUB defaults

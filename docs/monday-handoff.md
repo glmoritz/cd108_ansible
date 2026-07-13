@@ -16,47 +16,41 @@ State as of Fri 2026-07-10 EOD. Where we are, what's open, how to resume.
   handling, zfs mount idempotency, Downloads not synced, lean server package set,
   lab-workstation stuff gated off the hub, etc.
 
-## 🚨 CRITICAL — the golden image is NOT cleaned/re-captured
-**All of today's fixes live in the Ansible repo (applied at converge time). The
-captured image `cd108-golden-2026-07-09` is UNCHANGED** — it still has: ssh
-disabled, the phantom Windows GRUB entry, the conflicting baked apt `.sources`
-(docker/vscode/chrome/ettus/ra3xdh), the legacy `lab-zfs-restore`, `/mnt` garbage,
-Downloads content in the home datasets, and a 190 GB ext4 (too big for smaller
-SSDs). That's why a freshly-flashed clone still needs manual touch-ups.
+## ✅ DONE 2026-07-13 — golden cleaned + re-captured, hostname fixed
+- **Clean image `cd108-golden-2026-07-13` (27 GB) is captured and ocs-chkimg-verified
+  restorable** (sda1/sda3/sda7). The old `cd108-golden-2026-07-09` is kept as a
+  fallback. Cleaning was done **offline from the live USB** (`ubuntu@103.0.2.13`,
+  golden's OS wasn't running): mounted sda3 rw + imported ssdpool, then removed the
+  legacy units/scripts (`set-hostname.service`, `lab-zfs-restore.*`, clipboard
+  mount), stripped `/mnt` junk, removed baked dup/dead apt sources, set
+  `GRUB_DISABLE_OS_PROBER=true` + chroot `update-grub` (**0 Windows menuentries**,
+  was 2), and emptied the Downloads datasets (+destroyed their `@golden` child
+  snapshots). Capture needed **`--nogui`** (see the runbook gotcha).
+- **Hostname bug FIXED.** Root cause was the golden's `set-hostname.service` →
+  `set-hostname-from-mac.sh` re-stamping `lab-unknown-<mac>` every boot — **not**
+  cloud-init (which is disabled). The `common` role now purges it; verified on
+  `cd108-flashtest` (converge → reboot → `hostnamectl` = `cd108-flashtest`, sticks).
+  Also removed from the golden image itself.
+- **No ext4 shrink** — the fleet SSDs are 480 GB with a 190 GB ext4 root by design
+  (the earlier "shrink to 120 GB" note was a flashtest-VM sizing mistake).
 
-**Before real deployment we must RE-CAPTURE the golden**, after:
-1. Converge the golden with the current repo (`site.yml --limit <golden> --tags common`)
-   so ssh-enable, os-prober-off, apt dedup, hostname fix, etc. are baked in.
-2. Run `prepare-golden-image.yml -e capture_now=true` (sysprep: keyless, regen unit,
-   blank machine-id).
-3. **Shrink the ext4** to ~120 GB (see [[flashtest-vm-shakeout]] note; 190 GB
-   starves zfs on ~240 GB SSDs).
-4. Empty the golden's local `/mnt` junk and the Downloads dirs.
-5. Re-capture via Clonezilla `saveparts sda1 sda3 sda7` (see
-   [`golden-image-prep.md`](golden-image-prep.md), [`imaging-automation.md`](imaging-automation.md)).
-
-Until then, the current image works but a clone needs the per-boot fixes a converge
-provides.
+Repeatable cleaning is also codified in `prepare-golden-image.yml` (strips `/mnt`
+junk, empties Downloads) for the next time a *running* golden is sysprepped.
 
 ## Open items
-1. **Hostname still reverts to `lab-unknown-<id>` after reboot.** phone-home works
-   but the machine reports lab-unknown. I added `cloud-init preserve_hostname: true`
-   (common role) but it's **UNVERIFIED** — the machine was rebooted before the fix
-   was converged onto it. Monday: converge a machine with the fix, reboot, confirm
-   the hostname sticks. If it still reverts, the culprit is elsewhere — check
-   `NetworkManager` hostname-mode (DHCP option 12) and systemd-hostnamed.
-2. **`/mnt` garbage on the golden** — needs a strip task in `common` (or golden
-   prep). Blocked today by flashtest SSH being down; inspect `/mnt` once reachable.
-3. **`cd108clipboard` mount** — DECISION NEEDED: the cd108-server VM doesn't export
+1. **`cd108clipboard` mount** — DECISION NEEDED: the cd108-server VM doesn't export
    a clipboard (it has the "troca" NFS exchange). Should the student clipboard mount
    the server's troca share, or a separate clipboard dataset? Then wire the client
    mount to `cd108.tutu.eng.br`.
-4. **SDR++ not built** — the server play compiles/packages it (heavy). Run
+2. **SDR++ not built** — the server play compiles/packages it (heavy). Run
    `site.yml --limit cd108.tutu.eng.br --tags sdr` once; clients then just pull the
    tarball (distribution logic is proven, currently skips gracefully when absent).
-5. **Clonezilla not selectable at boot** — by design (USB-boot per runbook). Optional:
+3. **Clonezilla not selectable at boot** — by design (USB-boot per runbook). Optional:
    add a GRUB chainload entry to the `sda7` recovery partition if on-disk recovery
    should be selectable.
+4. **Validate the new golden end-to-end** — restore `cd108-golden-2026-07-13` to a
+   fresh machine/VM, confirm first boot is clean (right hostname after converge, no
+   Windows GRUB entry, ssh accepts Ansible) and a full converge stays green.
 
 ## How to resume Monday
 - **Bridge is ephemeral (option B).** After any **host reboot**, run

@@ -249,8 +249,22 @@ Then, in Clonezilla:
 > **Can't boot Clonezilla?** Any live Linux with the `clonezilla` + `partclone`
 > packages captures an identical image: `apt install clonezilla partclone nfs-common`,
 > mount the repo at `/home/partimag`, unmount the target partitions, then
-> `ocs-sr -q2 -z1p -senc -sfsck -p true -batch saveparts <image> "sda1 sda3 sda7"`.
-> This is how `cd108-golden-2026-07-09` was captured.
+> `ocs-sr -q2 -z1p -senc -sfsck -p true -batch --nogui saveparts <image> "sda1 sda3 sda7"`.
+> This is how `cd108-golden-2026-07-09` and the clean `cd108-golden-2026-07-13`
+> were captured (from a full live Ubuntu boot; Clonezilla Live wouldn't boot).
+>
+> ⚠️ **`--nogui` is mandatory when there's no terminal** (running via `systemd-run`,
+> `nohup`, or ssh without a pty). Without it, ocs-sr passes `-N` to partclone, which
+> opens an ncurses UI that fails to init (`partclone ncurses initial error`) and
+> writes **zero** partition data — the run "ends" in seconds with only metadata files.
+> Launch detached and verify:
+> ```
+> sudo systemd-run --unit=recapture ocs-sr -q2 -z1p -senc -sfsck -p true \
+>   --nogui -batch saveparts <image> sda1 sda3 sda7
+> sudo ocs-chkimg -b -nogui <image>   # NOT -batch; that flag is invalid here
+> ```
+> (Don't `pkill -f 'ocs-sr|partclone'` to clean up — it matches your own ssh command
+> line and kills your session. Use `pkill -f 'ocs[-]sr'` + `pkill -x partclone.ext4`.)
 
 > Confirm the partitions against the golden's `lsblk` before ticking — the
 > principle (system partitions in the image, `zfs` partition out and empty) is
