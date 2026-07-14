@@ -3,6 +3,37 @@
 # untested golden mechanisms (set-hostname-from-mac.sh) are replaced with the
 # idiomatic Ansible path.
 
+# --- Kingston A400 NCQ disarm (MUST be first) -------------------------------
+# The lab SSDs (KINGSTON SA400S3, DRAM-less) hang under NCQ write load and take
+# the SATA link (and the root fs) down with them. Pinning queue_depth=1 gets a
+# machine past the lighter apt-cache writes a few tasks below (where converges
+# died first). Do it at RUNTIME right now, before anything writes, plus a udev
+# rule so it survives reboots. Model-matched, so non-A400 hosts are untouched.
+# CAVEAT (2026-07-14): this is HARDENING, NOT a full fix — with NCQ off the A400s
+# STILL fail under the heavier ZFS receive / concurrent load (`SError: {HostInt/
+# Handshk}` + hard link resets). These drives likely need replacing (the KC600 in
+# cd106-05 converges cleanly). See memory: kingston-a400-ncq-fstrim.
+- name: Disarm A400 NCQ at runtime before any heavy write (queue_depth=1)
+  ansible.builtin.shell: |
+    set -eu
+    for d in /sys/block/sd*; do
+      m=$(cat "$d/device/model" 2>/dev/null || echo "")
+      case "$m" in
+        *SA400*) echo 1 > "$d/device/queue_depth" 2>/dev/null || true ;;
+      esac
+    done
+  changed_when: false
+
+- name: Persist NCQ-off on Kingston A400 via udev (survives reboot)
+  ansible.builtin.copy:
+    dest: /etc/udev/rules.d/60-kingston-a400-noncq.rules
+    mode: "0644"
+    content: |
+      # Kingston A400 (Phison S11, DRAM-less) hangs under NCQ write load → SATA
+      # link resets → ext4 read-only. Pin queue_depth=1 (NCQ off). Managed by
+      # Ansible (roles/common). See roles/common/tasks/main.yml.
+      ACTION=="add|change", SUBSYSTEM=="block", KERNEL=="sd?", ATTRS{model}=="*SA400*", ATTR{device/queue_depth}="1"
+
 # --- apt cache proxy -------------------------------------------------------
 # HTTP repos are cached by apt-cacher-ng; HTTPS repos (docker/vscode/chrome/
 # opensuse/PPAs) are TUNNELLED through it (CONNECT passthrough — not cached) so
@@ -216,6 +247,23 @@
   ansible.builtin.systemd:
     daemon_reload: true
   when: legacy_purge is changed
+
+# TRIM CORRUPTION — the A400's secondary killer (NCQ is handled first, at the top
+# of this role). The stock golden ships `fstrim.timer` ENABLED; its weekly/boot
+# catch-up fires `fstrim` at sda3 on its own (it did at 15:13 on 2026-07-14) and
+# the A400 firmware corrupts the discarded blocks → read-only/initramfs,
+# independent of the converge. TRIM is only a GC optimisation; mask it fleet-wide
+# (mask, not just disable, so no timer/boot-catchup/manual call can issue a discard).
+- name: Kill TRIM/fstrim (Kingston A400 firmware corrupts data on discard)
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: false
+    state: stopped
+    masked: true
+  loop:
+    - fstrim.timer
+    - fstrim.service
+  failed_when: false
 
 # mDNS: with the hostname set (below) each box advertises <hostname>.local,
 # so the control node reaches it by name regardless of its DHCP-assigned IP.
