@@ -7,3 +7,9 @@
 
 - name: reload sshd
   ansible.builtin.systemd: { name: ssh, state: reloaded }
+
+# Re-read NM config (picks up the EUI-64 conf.d default) WITHOUT flapping the
+# active connection — Ansible may be connected over it. The new addr-gen-mode is
+# applied when the connection next activates (next boot), not mid-converge.
+- name: reload networkmanager
+  command: nmcli general reload conf

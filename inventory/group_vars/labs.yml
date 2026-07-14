@@ -15,8 +15,14 @@
 #     the control node's uplink interface as the IPv6 zone id.
 #
 # A per-host ansible_host in hosts.yml (e.g. a pinned IPv4) overrides this.
-lab_ipv6_prefix: "2801:82:c004:103::"   # confirmed router-advertised /64; with
-                                        # privacy ext off (common role) a host's
+                                        # NOTE: single TRAILING COLON, not "::".
+                                        # It is string-concatenated with the full
+                                        # 64-bit EUI-64 ifid (`{{prefix}}{{ifid}}`),
+                                        # so the CIDR "::" form yields 8 groups + a
+                                        # stray "::" = an INVALID address that no
+                                        # resolver accepts (fixed 2026-07-14).
+lab_ipv6_prefix: "2801:82:c004:103:"    # router-advertised /64 is 2801:82:c004:103::/64;
+                                        # with privacy ext off (common role) a host's
                                         # global addr = this + its EUI-64.
 # This is the CONTROL NODE's own NIC (one value, not per lab machine); it is
 # only used as the IPv6 zone id in the link-local fallback (empty prefix).

@@ -99,6 +99,23 @@
     extra_zfs_properties:
       sharenfs: "{{ nfs_share_acl }}"
 
+# The Clonezilla image repo (goldens + restore-cd108-golden.sh). The 54 GB of
+# image blobs are rsync'd in out-of-band (one-time migration off the daily
+# driver); Ansible just guarantees the dataset exists and is NFS-exported with
+# no_root_squash so a Clonezilla live client (root) can read the 0600 blobs as
+# /home/partimag while re-imaging a machine.
+- name: Clonezilla image-repo dataset
+  command: "zfs create {{ images_repo_dataset }}"
+  args:
+    creates: "{{ images_repo_dir }}"
+
+- name: NFS-share the image repo (no_root_squash, so Clonezilla root can read it)
+  community.general.zfs:
+    name: "{{ images_repo_dataset }}"
+    state: present
+    extra_zfs_properties:
+      sharenfs: "{{ nfs_images_share_acl }}"
+
 # --- Boot-beacon receiver --------------------------------------------------
 # Logs one JSONL line per node phone-home POST to /var/log/phone-home/beacons.jsonl
 # (server adds recv_ts + source IP). stdlib Python, no deps; systemd DynamicUser

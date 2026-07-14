@@ -37,6 +37,16 @@ nfs_export_clients: "103.0.0.0/19"
 # ("Failed to resolve ..."); NFS rides IPv4 while SSH/Ansible use IPv6/EUI-64.
 nfs_share_acl: "rw=@103.0.0.0/19"
 
+# --- Golden Clonezilla image repo (served from the server hub) ------------
+# The server hosts the Clonezilla images that lab machines restore from. A
+# machine being re-imaged boots the Clonezilla live USB (root) and NFS-mounts
+# this dataset as /home/partimag, so it needs `no_root_squash` — the image
+# blobs are 0600 root, and a squashed (nobody) client can't read them. Distinct
+# from nfs_share_acl (golden datasets, pulled over SSH) which needs no such flag.
+images_repo_dataset: "{{ zfs_pool_server }}/cd108_images"
+images_repo_dir: "/mnt/{{ zfs_pool_server }}/cd108_images"
+nfs_images_share_acl: "no_root_squash,rw=@103.0.0.0/19"
+
 # --- MATLAB: LOCAL install, campus NETWORK license (FlexLM) ---------------
 # The binary is image-owned at matlab_root; Ansible only writes the network
 # license pointer. Students run it as the `estudante` account.
@@ -197,6 +207,8 @@ common_packages:
   - tcpdump
   - plocate
   - ethtool
+  - dmidecode               # phone-home hardware inventory: RAM modules, BIOS
+  - pciutils                # phone-home hardware inventory: lspci (GPU model)
   - mosquitto-clients
   - tio            # simple serial terminal (embedded UART work)
   - minicom        # classic serial terminal

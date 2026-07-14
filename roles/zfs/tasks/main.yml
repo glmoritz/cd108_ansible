@@ -3,8 +3,10 @@
 # builds (Clonezilla can't do ZFS). On the golden the pool is `ssdpool` (sda4),
 # with per-course homes under ssdpool/home (each with a `Downloads` child so
 # bulky downloads survive a reset) and the emergency Windows VM at
-# ssdpool/windows. Destructive ops are guarded to fresh machines only; the
-# actual home *reset* lives in reset-homes.yml.
+# ssdpool/windows. A converge REBUILDS the pool from the golden: if a stale
+# (not-imported) pool is left on the target, it's clobbered and recreated — see
+# the chainsaw note below. The per-home *reset* on a live pool lives in
+# reset-homes.yml.
 
 - name: Install ZFS + sanoid (snapshots) + send/recv throughput tools
   apt:
@@ -23,25 +25,45 @@
   failed_when: false
   changed_when: false
 
-# Safety: Clonezilla leaves {{ zfs_data_device }} as an UNFORMATTED labeled
-# partition. Refuse to touch it if anything already lives there — cheap
-# insurance against wiping the wrong place.
+# Clonezilla leaves {{ zfs_data_device }} as an UNFORMATTED labeled partition.
+# Probe it: a fresh restore is blank, but a RE-imaged disk still carries the old
+# `ssdpool` (sgdisk --zap-all in the restore script clears the partition TABLE,
+# not the partition CONTENTS), so blkid reports TYPE="zfs_member".
 - name: Probe the ZFS target for an existing filesystem/signature
   command: "blkid -p {{ zfs_data_device }}"
   register: zfs_target_blkid
   failed_when: false
   changed_when: false
 
-- name: Refuse to create the pool if the target is not empty
-  fail:
-    msg: >-
-      {{ zfs_data_device }} already contains data ({{ zfs_target_blkid.stdout }}).
-      Refusing to zpool create. Verify the partition/label before continuing.
+# CHAINSAW (authorized): a converge must be able to restore the golden onto a
+# re-imaged machine, so when a stale, not-currently-imported pool is found we
+# CLOBBER it and recreate rather than refuse. Re-imaging a disk means its old
+# data is meant to be gone — that's the point. This only fires when the pool is
+# NOT active (zpool_check.rc != 0); a live, imported ssdpool is never touched
+# here (per-home resets go through reset-homes.yml).
+- name: Clobber a stale (not-imported) pool left on the target, if any
   when: zpool_check.rc != 0 and zfs_target_blkid.rc == 0
+  block:
+    - name: Force-import the stale pool so it can be cleanly destroyed
+      command: "zpool import -f -N {{ zfs_pool }}"
+      register: stale_import
+      failed_when: false
+      changed_when: stale_import.rc == 0
 
-- name: Create the ZFS pool on the empty partition (fresh machine only)
-  command: "zpool create {{ zfs_pool }} {{ zfs_data_device }}"
-  when: zpool_check.rc != 0 and zfs_target_blkid.rc != 0
+    - name: Destroy the stale pool
+      command: "zpool destroy -f {{ zfs_pool }}"
+      when: stale_import.rc == 0
+      changed_when: true
+
+    - name: Wipe any residual ZFS labels/signatures off the target
+      command: "wipefs -a {{ zfs_data_device }}"
+      changed_when: true
+
+# Create over a blank partition, or over one we just clobbered above. -f is
+# belt-and-suspenders in case a residual label survived wipefs.
+- name: Create the ZFS pool on the (now-empty) partition
+  command: "zpool create -f {{ zfs_pool }} {{ zfs_data_device }}"
+  when: zpool_check.rc != 0
 
 # --- snapshots: sanoid config (golden shipped an EMPTY sanoid.conf) --------
 - name: Ensure the sanoid config dir exists

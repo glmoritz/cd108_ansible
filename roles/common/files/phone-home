@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+"""cd108 boot beacon -> lab hub.
+
+POSTs the machine's identity AND a hardware inventory (system model/serial, CPU,
+RAM, disks, GPU, BIOS, OS) to the hub on boot. Feeds two things on the server:
+  * fleet reconciliation by MAC   (scripts/scan-beacons.py)
+  * a live lab hardware inventory (scripts/fleet-hw.py)
+
+Stdlib only — no deps. Best-effort: every probe is guarded and the script ALWAYS
+exits 0, so it can never block or fail the boot. Runs as root (systemd oneshot),
+so DMI serial/UUID and `dmidecode` memory detail are readable.
+
+The URL comes from $PHONE_HOME_URL (set by the systemd unit). The payload keeps
+the original top-level identity keys (hostname/machine_id/macs/ip/ts) for
+backward compatibility and nests the hardware under "specs".
+"""
+import json
+import os
+import re
+import socket
+import subprocess
+import urllib.request
+from datetime import datetime, timezone
+
+URL = os.environ.get("PHONE_HOME_URL", "http://localhost:8888/boot")
+
+# Placeholder strings OEMs leave in DMI fields — treat these as "unknown".
+_JUNK = {"", "to be filled by o.e.m.", "default string", "not specified",
+         "not applicable", "none", "unknown", "system serial number",
+         "system product name", "system manufacturer", "system version",
+         "not available", "0", "00000000", "000000000"}
+
+
+def run(cmd, timeout=3):
+    """Run a command, return stdout ('' on any failure/timeout — never raises)."""
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True,
+                              timeout=timeout).stdout
+    except Exception:
+        return ""
+
+
+def read(path):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+
+def dmi(name):
+    """A /sys/class/dmi/id/<name> value, or None if absent/placeholder junk."""
+    v = read("/sys/class/dmi/id/" + name)
+    return None if v.lower() in _JUNK else v
+
+
+def prune(v):
+    """Recursively drop None/empty values so the JSON stays tidy."""
+    if isinstance(v, dict):
+        out = {}
+        for k, val in v.items():
+            pv = prune(val)
+            if pv not in (None, "", [], {}):
+                out[k] = pv
+        return out
+    if isinstance(v, list):
+        return [prune(x) for x in v]
+    return v
+
+
+def macs():
+    ms, seen = [], set()
+    for m in re.findall(r"link/ether ([0-9a-f:]{17})",
+                        run(["ip", "-o", "link", "show", "up"])):
+        if m not in seen:
+            seen.add(m)
+            ms.append(m)
+    return ms
+
+
+def primary_ip():
+    m = re.search(r"src ([0-9.]+)",
+                  run(["ip", "-o", "route", "get", "1.1.1.1"]))
+    return m.group(1) if m else None
+
+
+def cpu():
+    out = {}
+    m = re.search(r"^model name\s*:\s*(.+)$", read("/proc/cpuinfo"), re.M)
+    if m:
+        out["model"] = m.group(1).strip()
+    ls = {}
+    for line in run(["lscpu"]).splitlines():
+        if ":" in line:
+            k, val = line.split(":", 1)
+            ls[k.strip()] = val.strip()
+    for src, dst in (("Architecture", "arch"),
+                     ("CPU(s)", "logical_cpus"),
+                     ("Socket(s)", "sockets"),
+                     ("Core(s) per socket", "cores_per_socket"),
+                     ("Thread(s) per core", "threads_per_core"),
+                     ("CPU max MHz", "max_mhz")):
+        if ls.get(src):
+            out[dst] = ls[src]
+    return out
+
+
+def memory():
+    out = {}
+    m = re.search(r"MemTotal:\s*(\d+)", read("/proc/meminfo"))
+    if m:
+        out["total_gb"] = round(int(m.group(1)) / 1048576, 1)  # KiB -> GiB
+    # Per-DIMM detail is best-effort (needs dmidecode + root); skip if absent.
+    mods, cur = [], None
+    for line in run(["dmidecode", "-t", "memory"]).splitlines():
+        s = line.strip()
+        if s == "Memory Device":
+            if cur and cur.get("size"):
+                mods.append(cur)
+            cur = {}
+        elif cur is not None and ":" in s:
+            k, val = (x.strip() for x in s.split(":", 1))
+            if k == "Size" and val and "No Module" not in val and val != "Unknown":
+                cur["size"] = val
+            elif k == "Type" and val not in ("", "Unknown"):
+                cur["type"] = val
+            elif k == "Speed" and val not in ("", "Unknown"):
+                cur["speed"] = val
+            elif k == "Locator" and val not in ("", "Unknown"):
+                cur["slot"] = val
+            elif k == "Part Number" and val not in ("", "Unknown", "Not Specified"):
+                cur["part"] = val
+    if cur and cur.get("size"):
+        mods.append(cur)
+    mods = [x for x in mods if x.get("size")]
+    if mods:
+        out["modules"] = mods
+        out["slots_used"] = len(mods)
+    return out
+
+
+def disks():
+    try:
+        data = json.loads(run(["lsblk", "-J", "-b", "-d",
+                               "-o", "NAME,TYPE,SIZE,ROTA,TRAN,MODEL"]) or "{}")
+    except Exception:
+        return []
+    res = []
+    for d in data.get("blockdevices", []):
+        if d.get("type") != "disk":
+            continue
+        size = d.get("size")
+        try:
+            size_gb = round(int(size) / 1e9, 1)
+        except (TypeError, ValueError):
+            size_gb = None
+        res.append({
+            "name": d.get("name"),
+            "size_gb": size_gb,
+            "kind": "HDD" if str(d.get("rota")) in ("1", "True") else "SSD",
+            "bus": d.get("tran") or None,
+            "model": (d.get("model") or "").strip() or None,
+        })
+    return res
+
+
+def gpus():
+    out = []
+    for line in run(["lspci"]).splitlines():
+        if re.search(r"VGA compatible|3D controller|Display controller", line):
+            out.append(line.split(":", 2)[-1].strip())
+    return out
+
+
+def os_info():
+    out = {}
+    rel = read("/etc/os-release")
+    for key, dst in (("PRETTY_NAME", "pretty"), ("VERSION_ID", "version_id")):
+        m = re.search(r'^%s="?([^"\n]+)"?' % key, rel, re.M)
+        if m:
+            out[dst] = m.group(1)
+    out["kernel"] = run(["uname", "-r"]).strip() or None
+    return out
+
+
+def build_payload():
+    return prune({
+        "hostname": socket.gethostname(),
+        "machine_id": read("/etc/machine-id") or None,
+        "macs": macs(),
+        "ip": primary_ip(),
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "specs": {
+            "system": {
+                "vendor": dmi("sys_vendor"),
+                "product": dmi("product_name"),
+                "version": dmi("product_version"),
+                "serial": dmi("product_serial"),
+                "uuid": dmi("product_uuid"),
+                "board": dmi("board_name"),
+            },
+            "bios": {
+                "vendor": dmi("bios_vendor"),
+                "version": dmi("bios_version"),
+                "date": dmi("bios_date"),
+            },
+            "cpu": cpu(),
+            "memory": memory(),
+            "disks": disks(),
+            "gpu": gpus(),
+            "os": os_info(),
+        },
+    })
+
+
+def main():
+    try:
+        body = json.dumps(build_payload()).encode()
+        req = urllib.request.Request(
+            URL, data=body, headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=5).read()
+    except Exception:
+        pass  # best-effort; boot must never fail on the beacon
+
+
+if __name__ == "__main__":
+    main()

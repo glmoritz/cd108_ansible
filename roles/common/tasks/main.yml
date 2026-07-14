@@ -310,6 +310,48 @@
     reload: true
   loop: [all, default]
 
+# use_tempaddr=0 alone is NOT enough for the MAC-derived addressing the fleet
+# relies on (inventory/group_vars/labs.yml). NetworkManager defaults to
+# addr-gen-mode=stable-privacy, which gives a STABLE but NON-EUI-64 suffix — so
+# a host's real address is NOT prefix+EUI-64(MAC) and Ansible can't reach it by
+# name. Force EUI-64. Name/device-agnostic via an NM conf.d connection default;
+# it takes effect at the next connection activation (i.e. after a reboot), so a
+# freshly imaged host is reachable-by-name only after its first post-converge boot.
+- name: Force IPv6 EUI-64 addressing (so a host matches its MAC-derived address)
+  copy:
+    dest: /etc/NetworkManager/conf.d/00-ipv6-eui64.conf
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/common). Give every connection a computable
+      # EUI-64 IPv6 suffix instead of NetworkManager's stable-privacy default,
+      # so the fleet reaches a host at {prefix + EUI-64(MAC)} with no DNS/DHCP.
+      [connection]
+      ipv6.addr-gen-mode=eui64
+  notify: reload networkmanager
+
+# The conf.d default above is only consulted for connections whose
+# addr-gen-mode is UNSET (e.g. a clone's freshly auto-generated wired profile).
+# VERIFIED on NM 1.46 (2026-07-14): a profile whose value is the enum `default`
+# does NOT fall through to the conf.d — it resolves straight to stable-privacy —
+# so an existing profile stays non-EUI-64 even after a reboot. Pin it EXPLICITLY
+# on every wired profile so the address is deterministic regardless of prior
+# state. Like the conf.d, this only applies at the next connection activation.
+- name: Pin EUI-64 explicitly on existing wired NM profiles (conf.d default is ignored when a profile carries an explicit value)
+  shell: |
+    set -eu
+    changed=0
+    for uuid in $(nmcli -t -f UUID,TYPE connection show | awk -F: '$2=="802-3-ethernet"{print $1}'); do
+      cur=$(nmcli -g ipv6.addr-gen-mode connection show "$uuid" || echo "")
+      if [ "$cur" != "eui64" ]; then
+        nmcli connection modify "$uuid" ipv6.addr-gen-mode eui64
+        changed=1
+      fi
+    done
+    echo "CHANGED=$changed"
+  register: eui64_pin
+  changed_when: "'CHANGED=1' in eui64_pin.stdout"
+  notify: reload networkmanager
+
 # Wake-on-LAN: the NIC supports magic-packet wake but ships disabled. A udev
 # rule is the standard persistent way (no dedicated Ansible module).
 - name: Enable Wake-on-LAN (magic packet) via udev rule
@@ -332,25 +374,9 @@
 # on the server (roles/server); reconcile with scripts/scan-beacons.py.
 - name: Install the boot-beacon reporter
   copy:
+    src: phone-home           # stdlib-Python; gathers a hardware inventory too
     dest: /usr/local/bin/phone-home
     mode: "0755"
-    content: |
-      #!/usr/bin/env bash
-      # Boot beacon -> lab hub. Best-effort: never blocks or fails the boot.
-      set -u
-      URL="${PHONE_HOME_URL:-http://{{ server_host }}:{{ phone_home_port | default(8888) }}/boot}"
-      host=$(hostname)
-      mid=$(cat /etc/machine-id 2>/dev/null || true)
-      ip=$(ip -o route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p' | head -1)
-      ts=$(date -Is)
-      macs=$(ip -o link show up 2>/dev/null \
-        | awk -F'link/ether ' '/link\/ether/{split($2,a," "); m[++n]=a[1]} \
-            END{s="["; for(i=1;i<=n;i++) s=s (i>1?",":"") "\"" m[i] "\""; print s "]"}')
-      [ -z "$macs" ] && macs="[]"
-      payload=$(printf '{"hostname":"%s","machine_id":"%s","macs":%s,"ip":"%s","ts":"%s"}' \
-        "$host" "$mid" "$macs" "$ip" "$ts")
-      curl -fsS --max-time 5 -H 'Content-Type: application/json' --data "$payload" "$URL" >/dev/null 2>&1 || true
-      exit 0
 
 - name: Install the boot-beacon systemd unit
   copy:
@@ -364,6 +390,9 @@
 
       [Service]
       Type=oneshot
+      # The reporter runs as root (no User=) so it can read DMI serial/UUID and
+      # dmidecode memory detail for the hardware inventory.
+      Environment=PHONE_HOME_URL=http://{{ server_host }}:{{ phone_home_port | default(8888) }}/boot
       ExecStart=/usr/local/bin/phone-home
 
       [Install]
