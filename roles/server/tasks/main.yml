@@ -116,6 +116,23 @@
     extra_zfs_properties:
       sharenfs: "{{ nfs_images_share_acl }}"
 
+# Restore helpers live IN the repo (a Clonezilla Live client mounts it at
+# /home/partimag and runs them). Previously rsync'd in out-of-band with the
+# blobs; now version-controlled and Ansible-deployed so they survive a repo
+# rebuild. layout-disk.sh sizes the zfs partition per-target; restore-cd108-golden.sh
+# lays out + restoreparts the golden. See docs/imaging-automation.md.
+- name: Deploy the disk-layout helper into the image repo
+  copy:
+    src: layout-disk.sh
+    dest: "{{ images_repo_dir }}/layout-disk.sh"
+    mode: "0755"
+
+- name: Deploy the golden restore script into the image repo
+  template:
+    src: restore-cd108-golden.sh.j2
+    dest: "{{ images_repo_dir }}/restore-cd108-golden.sh"
+    mode: "0755"
+
 # --- Boot-beacon receiver --------------------------------------------------
 # Logs one JSONL line per node phone-home POST to /var/log/phone-home/beacons.jsonl
 # (server adds recv_ts + source IP). stdlib Python, no deps; systemd DynamicUser

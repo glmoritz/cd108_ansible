@@ -26,6 +26,10 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INVENTORY = os.path.join(REPO, "inventory", "hosts.yml")
 DEFAULT_SERVER = "cd108.tutu.eng.br"   # fallback only; normally read from inventory
 REMOTE_LOG = "/var/log/phone-home/beacons.jsonl"
+# The hub only accepts the fleet deploy account + key (not your login user), and
+# the beacon log is root-owned, so pull it as daelt (NOPASSWD sudo) over the key.
+SSH_USER = os.environ.get("CD108_SSH_USER", "daelt")
+SSH_KEY = os.path.expanduser(os.environ.get("CD108_SSH_KEY", "~/.ssh/id_cd108_ansible"))
 
 
 def norm(mac):
@@ -79,10 +83,12 @@ def load_beacons(path, server):
     if path:
         raw = open(path).read()
     else:
-        r = subprocess.run(["ssh", server, f"sudo cat {REMOTE_LOG}"],
-                           capture_output=True, text=True)
+        ssh_cmd = ["ssh", "-i", SSH_KEY, "-o", "IdentitiesOnly=yes",
+                   "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=8",
+                   f"{SSH_USER}@{server}", f"sudo cat {REMOTE_LOG}"]
+        r = subprocess.run(ssh_cmd, capture_output=True, text=True)
         if r.returncode != 0:
-            sys.exit(f"could not read {REMOTE_LOG} on {server}:\n{r.stderr.strip()}")
+            sys.exit(f"could not read {REMOTE_LOG} on {SSH_USER}@{server}:\n{r.stderr.strip()}")
         raw = r.stdout
     latest = {}
     for line in raw.splitlines():

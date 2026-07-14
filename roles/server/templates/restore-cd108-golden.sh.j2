@@ -1,0 +1,49 @@
+#!/bin/sh
+# restore-cd108-golden.sh [DISK] [IMAGE]   (defaults: /dev/sda, the current golden)
+#
+# Lay out the target disk and restore the cd108 golden SYSTEM partitions
+# (ESP + ext4 root + recovery) from the NFS image repo. The ZFS data partition
+# is NOT in the image — Ansible builds ssdpool on the empty, labelled sda4 and
+# `zfs recv`s the homes/Windows afterward.
+#
+# Run from a Clonezilla Live shell, AFTER mounting the repo at /home/partimag:
+#   sudo mount -t nfs -o vers=3 {{ server_host }}:{{ images_repo_dir }} /home/partimag
+#   sudo sh /home/partimag/restore-cd108-golden.sh /dev/sda
+#
+# Managed by Ansible (roles/server) — do not edit in place; edit the template.
+set -eu
+
+DISK="${1:-/dev/sda}"
+IMAGE="${2:-{{ golden_image_name }}}"
+PARTIMAG=/home/partimag
+HERE="$(dirname "$0")"
+
+[ -b "$DISK" ] || { echo "restore: '$DISK' is not a block device" >&2; exit 1; }
+if [ ! -d "$PARTIMAG/$IMAGE" ]; then
+    echo "restore: image '$IMAGE' not found under $PARTIMAG." >&2
+    echo "Mount the repo first:" >&2
+    echo "  mount -t nfs -o vers=3 {{ server_host }}:{{ images_repo_dir }} $PARTIMAG" >&2
+    exit 1
+fi
+
+DEV="$(basename "$DISK")"
+echo "=================================================================="
+echo " cd108 golden restore"
+echo "   target disk : $DISK   (will be ERASED)"
+echo "   image       : $IMAGE"
+echo "=================================================================="
+printf "Type YES to wipe %s and restore: " "$DISK"
+read ans
+[ "$ans" = "YES" ] || { echo "aborted."; exit 1; }
+
+# 1) partition THIS disk to fit (numbers must match the image: 1/3/7 + zfs=4)
+sh "$HERE/layout-disk.sh" "$DISK"
+
+# 2) restore the three system partitions (each to the target of the SAME name).
+#    -k : the table already exists (layout-disk just built it)
+#    -r : grow the restored ext4 to fill its partition (no shrink)
+#    -p true : stop at a shell when done so you can verify before powering off
+ocs-sr -batch -k -r -p true restoreparts "$IMAGE" "${DEV}1 ${DEV}3 ${DEV}7"
+
+echo ">> Restore finished. Verify, then 'poweroff' and boot the disk"
+echo "   (do NOT re-run the OS from Clonezilla)."

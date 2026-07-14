@@ -20,7 +20,7 @@
 # Guarded: nothing runs unless you pass  -e capture_now=true.
 # ===========================================================================
 - name: Sysprep the golden for image capture
-  hosts: cd108-test-01
+  hosts: "{{ golden_capture_host | default('cd108-test-01') }}"
   become: true
   gather_facts: true
 
