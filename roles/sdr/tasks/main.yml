@@ -56,6 +56,14 @@
     cmake --install build
   args: { chdir: /usr/local/src/SDRPlusPlus, creates: /usr/local/src/SDRPlusPlus/build/sdrpp }
 
+# MIGRATION (2026-07-15, remove once the fleet has re-converged): the abandoned
+# build-once-distribute flow unpacked the SERVER's (26.04) /usr/share/uhd/4.9.0
+# images tree onto clients — ~200 MB in a version dir noble's UHD never reads,
+# and it poisons the images-dir discovery below. The dir only ever came from
+# that tarball; no noble package ships it.
+- name: Remove the stray server-version UHD images dir (old tarball distribution)
+  file: { path: /usr/share/uhd/4.9.0, state: absent }
+
 # Only the B2xx bitstreams are needed (the lab's LibreSDR B210 clones; RTL-SDR
 # dongles need no image) — the full image set is ~500 MB, the b2xx subset ~20 MB.
 # The downloader keeps an inventory.json and skips targets that are already
