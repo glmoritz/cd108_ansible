@@ -197,7 +197,7 @@ Keep the master image small by excluding the ZFS data partition.
    once: download `clonezilla-live-*.iso`, `dd` it to a USB stick), press the
    boot-menu key (often F12), pick the USB.
 2. Choose **`device-image`**, then the image **source**: the NFS repo
-   (`103.0.1.16:/mnt/ssdpool/cd108_images`), or a local USB with the image on it.
+   (`103.0.1.43:/mnt/ssdpool/cd108_images`), or a local USB with the image on it.
 3. **Partition to fit this disk (only if it's blank or a different size than the
    golden).** The image is system-partitions-only, so lay a fresh table with a
    fixed head and the `zfs` partition **last**, filling the rest:
@@ -238,7 +238,7 @@ generalize its identity so clones aren't twins. That's its own checklist —
 Then, in Clonezilla:
 
 1. Boot the (already-generalized) reference machine into Clonezilla.
-2. `device-image` → mount the NFS repo (`103.0.1.16:/mnt/ssdpool/cd108_images`) →
+2. `device-image` → mount the NFS repo (`103.0.1.43:/mnt/ssdpool/cd108_images`) →
    **Expert** → **`saveparts`**, selecting the **EFI/ESP + ext4 root + Clonezilla
    recovery** partitions (`sda1`, `sda3`, `sda7`) and leaving the `zfs`/`ssdpool`
    partition (`sda4`) **unticked**. Clonezilla still records the disk's partition

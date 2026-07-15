@@ -15,7 +15,7 @@ Clonezilla Live reads **boot-time parameters** that let it run fully unattended
   (this is what makes any SSD size work — see below). Clonezilla restores from
   `/home/partimag`:
   ```
-  ocs_prerun1="mount -t nfs 103.0.1.16:/mnt/ssdpool/cd108_images /home/partimag"
+  ocs_prerun1="mount -t nfs 103.0.1.43:/mnt/ssdpool/cd108_images /home/partimag"
   ocs_prerun2="/home/partimag/layout-disk.sh"   # sgdisk: ESP + ext4 + zfs=rest
   ```
 - **`ocs_live_run`** — the batch restore. `-batch` = no questions. Because the
@@ -135,5 +135,5 @@ per-disk is what lets **one image fit every SSD**. The recovery-partition varian
 makes it remotely triggerable without a flash drive.
 
 **Not built yet** — this is the roadmap. Prerequisite for all three: the image
-lives on the NFS repo (`103.0.1.16:/mnt/ssdpool/cd108_images` today) and that repo
+lives on the NFS repo (`103.0.1.43:/mnt/ssdpool/cd108_images` today) and that repo
 is reachable from the lab LAN.

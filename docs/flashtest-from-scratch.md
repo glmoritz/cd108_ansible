@@ -12,7 +12,7 @@ mimics a real ~512 GB lab SSD, before touching hardware. Follow top to bottom.
 - NVRAM cleared.
 
 The golden image is `cd108-golden-2026-07-09` on the NFS repo
-`103.0.1.16:/mnt/ssdpool/cd108_images`, and `restore-cd108-golden.sh` lives in that
+`103.0.1.43:/mnt/ssdpool/cd108_images`, and `restore-cd108-golden.sh` lives in that
 same repo (already uses the correct `1/3/7 + zfs(4)=rest` layout).
 
 ---
@@ -26,11 +26,11 @@ virsh start cd108-flashtest --reset-nvram
 
 Open the VM console (`virt-manager`, or `virsh console cd108-flashtest`). In the
 Clonezilla menu choose **"Enter shell / command line prompt"**. NAT gives the VM a
-DHCP address automatically, and it can reach the NFS server (103.0.1.16) through the
+DHCP address automatically, and it can reach the NFS server (103.0.1.43) through the
 host. Then:
 
 ```bash
-sudo mount -t nfs -o vers=3 103.0.1.16:/mnt/ssdpool/cd108_images /home/partimag
+sudo mount -t nfs -o vers=3 103.0.1.43:/mnt/ssdpool/cd108_images /home/partimag
 sudo bash /home/partimag/restore-cd108-golden.sh /dev/sda
 ```
 

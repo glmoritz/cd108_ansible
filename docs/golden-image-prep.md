@@ -90,7 +90,7 @@ clones — the twin problem. If that happens, re-run the sysprep before capturin
 
 Power off, insert the Clonezilla Live USB, boot from it, choose
 `device-image`, mount the cd108 NFS repo
-(`103.0.1.16:/mnt/ssdpool/cd108_images`) so re-imaging can pull it from the
+(`103.0.1.43:/mnt/ssdpool/cd108_images`) so re-imaging can pull it from the
 network, and capture with **`saveparts`** (see below).
 
 ### The locked capture layout (decided 2026-07)
@@ -158,5 +158,5 @@ that's the whole point of the image-owned key.
 - [ ] `prepare-golden-image.yml -e capture_now=true` run
 - [ ] powered off **without** rebooting the OS
 - [ ] Clonezilla `saveparts` of **`sda1` + `sda3` + `sda7`** (skip `sda4`/`sda2`),
-      stored on `103.0.1.16:/mnt/ssdpool/cd108_images`
+      stored on `103.0.1.43:/mnt/ssdpool/cd108_images`
 - [ ] verified on the first re-imaged machine (unique id/host keys, ping works)

@@ -16,7 +16,7 @@ anything about the project — just follow the steps.
 - These fixed values (you'll type them in):
   | Thing | Value |
   |---|---|
-  | NFS server | `103.0.1.16` |
+  | NFS server | `103.0.1.43` |
   | Shared folder | `/mnt/ssdpool/cd108_images` |
   | Image name to type | `cd108-golden-ubuntu2404-<date>` (no spaces, e.g. `cd108-golden-ubuntu2404-20260710`) |
 
@@ -45,7 +45,7 @@ That's why this uses **`saveparts`**, not `savedisk`.
    `ssdpool`**. Type `exit` / `ocs-live` (or `Ctrl-Alt-F1`) to return to the menu.
 4. Choose **`device-image`**.
 5. Point it at the share — **`nfs_server`** → **`NFSv3`** → networking by
-   **`dhcp`** → server **`103.0.1.16`** → directory **`/mnt/ssdpool/cd108_images`**.
+   **`dhcp`** → server **`103.0.1.43`** → directory **`/mnt/ssdpool/cd108_images`**.
    It mounts and prints free space (plenty). *If it errors, see Troubleshooting.*
 6. Choose **`Expert`** mode.
 7. Choose **`saveparts`** (save selected partitions, not the whole disk).
@@ -84,7 +84,7 @@ ticked — redo step 9 (that partition must **not** be in the image).
 
 - **NFS mount fails / "connection refused" / "no route":** check the Ethernet
   cable is in and the link light is on; make sure you chose `dhcp`; re-enter the
-  server `103.0.1.16` and path `/mnt/ssdpool/cd108_images` exactly (leading slash,
+  server `103.0.1.43` and path `/mnt/ssdpool/cd108_images` exactly (leading slash,
   lowercase).
 - **Two (or more) disks listed:** choose the **internal** SATA/NVMe disk (big),
   never the Clonezilla USB (small, ~8–32 GB).

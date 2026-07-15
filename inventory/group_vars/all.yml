@@ -48,7 +48,7 @@ images_repo_dir: "/mnt/{{ zfs_pool_server }}/cd108_images"
 nfs_images_share_acl: "no_root_squash,rw=@103.0.0.0/19"
 # The golden the restore helper defaults to. Bump on each fresh capture; a
 # clonezilla restore can still override it as the 2nd arg to the script.
-golden_image_name: cd108-golden-2026-07-14b
+golden_image_name: cd108-golden-2026-07-15
 
 # --- MATLAB: LOCAL install, campus NETWORK license (FlexLM) ---------------
 # The binary is image-owned at matlab_root; Ansible only writes the network
