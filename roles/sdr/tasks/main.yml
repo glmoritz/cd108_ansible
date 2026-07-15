@@ -64,10 +64,15 @@
       find: { paths: /usr/share/uhd, patterns: images, file_type: directory, recurse: true }
       register: uhd_images
 
-    - name: Install the LibreSDR B200 firmware into the UHD images dir
+    # Upstream's patch.sh overwrites every usrp_b210_fpga.bin with their
+    # libresdr_b210.bin — the custom FPGA bitstream is the whole point of the
+    # repo (the USB firmware .hex is stock and already comes from
+    # uhd_images_downloader). Earlier revision wrongly looked for a
+    # usrp_b200_fw.hex the repo never shipped.
+    - name: Install the LibreSDR B210 FPGA image into the UHD images dir
       copy:
-        src: /usr/local/src/LibreSDR_USRP/usrp_b200_fw.hex
-        dest: "{{ (uhd_images.files | map(attribute='path') | first) }}/usrp_b200_fw.hex"
+        src: /usr/local/src/LibreSDR_USRP/libresdr_b210.bin
+        dest: "{{ (uhd_images.files | map(attribute='path') | first) }}/usrp_b210_fpga.bin"
         remote_src: true
       when: uhd_images.files | length > 0
 
