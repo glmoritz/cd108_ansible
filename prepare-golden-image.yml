@@ -67,11 +67,16 @@
         -exec truncate -s0 {} + ; :> /var/log/wtmp ; :> /var/log/btmp ; :> /var/log/lastlog
       changed_when: true
 
+    # Spare ansible's own working dirs (remote_tmp .ansible-* per ansible.cfg,
+    # and the extracted ansible_*payload* dir) — a blanket /tmp/* deletes the
+    # very module that's running (broke the sysprep on 2026-07-15). /tmp is
+    # boot-cleared on the clones anyway; this is just image hygiene.
     - name: Clear per-account shell history and tmp
       ansible.builtin.shell: >-
         rm -f /root/.bash_history
         {% for u in ([admin_user] + discipline_users) %}/home/{{ u }}/.bash_history {% endfor %};
-        rm -rf /tmp/* /var/tmp/* ; :
+        find /tmp /var/tmp -mindepth 1 -maxdepth 1
+        ! -name '.ansible-*' ! -name 'ansible_*' -exec rm -rf {} + ; :
       changed_when: true
 
     # --- strip golden /mnt leftovers ---------------------------------------
