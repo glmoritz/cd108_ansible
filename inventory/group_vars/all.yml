@@ -128,11 +128,12 @@ docker_users:
   - microcontroladores
   - estudante
 
-# --- SDR: build once on the server, distribute the artifact ---------------
-sdr_dist_dir: /srv/nfs/sdr
+# --- SDR: compiled on each lab machine (server is 26.04, labs 24.04 — a
+# server-built binary doesn't link on noble; see roles/sdr) ----------------
 sdr_packages:
   - build-essential
   - cmake
+  - libvolk-dev              # SDR++ DSP; explicit — don't rely on libuhd-dev pulling it
   - git
   - wget
   - libfftw3-dev

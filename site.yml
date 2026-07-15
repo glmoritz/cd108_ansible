@@ -7,7 +7,6 @@
   hosts: server
   roles:
     - { role: common,  tags: common }   # base CLI only (no desktop role → no GUI)
-    - { role: sdr,     tags: sdr }       # builds/packages the SDR++ artifact here
     - { role: server,  tags: server }   # apt-cache, NFS troca, golden ZFS store
 
 - name: All lab machines

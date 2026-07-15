@@ -1,8 +1,12 @@
 ---
-# SDR toolchain. Decision: build SDR++ ONCE on the server, distribute the
-# artifact to students. Libraries are installed on every machine (simplest
-# reliable way to satisfy the binary's shared-lib deps); only the compile and
-# the UHD image download happen on the server.
+# SDR toolchain. Decision (2026-07-15, REVERSES build-once-distribute): compile
+# SDR++ ON EACH lab machine. The server runs 26.04 while the labs run 24.04 —
+# a server-built artifact ships plugins linked against glibc 2.43 / volk 3.3 /
+# librtlsdr.so.0, none of which noble provides (verified broken on cd106-05:
+# every source plugin failed to link). The labs already carry libuhd 4.10 from
+# the golden's baked ettus PPA, so local builds link cleanly against what's
+# actually installed. Build deps ride in sdr_packages; the compile is a one-off
+# ~10 min per machine (creates-guarded on the build tree).
 
 # The ettus PPA is added HERE (the one authoritative place). The golden also bakes
 # its own copy (ettusresearch-ubuntu-uhd-noble.sources, inline key) — that baked
@@ -26,132 +30,62 @@
           blocked by the captive portal). Continuing; UHD comes from Ubuntu universe
           or the golden's baked repo. Bundle the key for a portal-independent fix.
 
-- name: Install SDR libraries + tools (all machines)
+- name: Install SDR libraries + build deps
   apt:
     name: "{{ sdr_packages }}"
     state: present
     update_cache: true
 
-- name: Blacklist the DVB driver so the RTL-SDR dongle is usable (all machines)
+- name: Blacklist the DVB driver so the RTL-SDR dongle is usable
   copy:
     dest: /etc/modprobe.d/blacklist-rtl.conf
     content: "blacklist dvb_usb_rtl28xxu\n"
   notify: unload dvb_usb_rtl28xxu
 
-# ------------------- BUILDER (server): compile + package once -------------------
-- name: Build and package SDR++ on the server
-  when: inventory_hostname in groups['server']
-  block:
-    - name: Clone SDR++ source
-      git: { repo: "https://github.com/AlexandreRouma/SDRPlusPlus.git", dest: /usr/local/src/SDRPlusPlus }
+# ------------------- build + install SDR++ locally -------------------
+- name: Clone SDR++ source
+  git: { repo: "https://github.com/AlexandreRouma/SDRPlusPlus.git", dest: /usr/local/src/SDRPlusPlus }
 
-    # SDR++'s CMakeLists defaults CMAKE_INSTALL_PREFIX to /usr (not /usr/local):
-    # the binary lands at /usr/bin/sdrpp, plugins at /usr/lib/sdrpp, data at
-    # /usr/share/sdrpp. Guard and archive on THOSE paths — the earlier /usr/local
-    # guesses meant the creates: never matched and the tarball packaged nothing.
-    - name: Compile and install SDR++ (once)
-      shell: |
-        cmake -B build -DOPT_BUILD_USRP_SOURCE=ON
-        cmake --build build -j"$(nproc)"
-        cmake --install build
-      args: { chdir: /usr/local/src/SDRPlusPlus, creates: /usr/bin/sdrpp }
+# Guard on the BUILD-TREE binary, not /usr/bin/sdrpp: machines that received
+# the (broken) server-built tarball already have /usr/bin/sdrpp and must still
+# rebuild; only a machine that compiled locally has build/sdrpp.
+- name: Compile and install SDR++ (once)
+  shell: |
+    cmake -B build -DOPT_BUILD_USRP_SOURCE=ON
+    cmake --build build -j"$(nproc)"
+    cmake --install build
+  args: { chdir: /usr/local/src/SDRPlusPlus, creates: /usr/local/src/SDRPlusPlus/build/sdrpp }
 
-    # The images land in a VERSIONED dir (/usr/share/uhd/<ver>/images, e.g.
-    # 4.9.0) — there is no /usr/share/uhd/images. Glob the guard so it matches
-    # any UHD version.
-    - name: Download UHD FPGA/firmware images (once)
-      command: uhd_images_downloader
-      args: { creates: "/usr/share/uhd/*/images" }
+# Only the B2xx bitstreams are needed (the lab's LibreSDR B210 clones; RTL-SDR
+# dongles need no image) — the full image set is ~500 MB, the b2xx subset ~20 MB.
+# The downloader keeps an inventory.json and skips targets that are already
+# current, so re-runs are cheap.
+- name: Download UHD B2xx FPGA/firmware images
+  command: uhd_images_downloader -t b2xx
+  register: uhd_dl
+  changed_when: "'Downloading' in (uhd_dl.stdout | default(''))"
 
-    - name: Clone LibreSDR firmware repo
-      git: { repo: "https://github.com/alphafox02/LibreSDR_USRP", dest: /usr/local/src/LibreSDR_USRP }
+- name: Clone LibreSDR firmware repo
+  git: { repo: "https://github.com/alphafox02/LibreSDR_USRP", dest: /usr/local/src/LibreSDR_USRP }
 
-    # Their script hardcoded /usr/share/uhd/4.9.0/images — breaks on UHD upgrade.
-    - name: Locate the UHD images directory (version-independent)
-      find: { paths: /usr/share/uhd, patterns: images, file_type: directory, recurse: true }
-      register: uhd_images
+# The images dir varies by UHD packaging (/usr/share/uhd/images on the PPA,
+# /usr/share/uhd/<ver>/images on some distro builds) — discover, don't hardcode.
+- name: Locate the UHD images directory (version-independent)
+  find: { paths: /usr/share/uhd, patterns: images, file_type: directory, recurse: true }
+  register: uhd_images
 
-    # Upstream's patch.sh overwrites every usrp_b210_fpga.bin with their
-    # libresdr_b210.bin — the custom FPGA bitstream is the whole point of the
-    # repo (the USB firmware .hex is stock and already comes from
-    # uhd_images_downloader). Earlier revision wrongly looked for a
-    # usrp_b200_fw.hex the repo never shipped.
-    - name: Install the LibreSDR B210 FPGA image into the UHD images dir
-      copy:
-        src: /usr/local/src/LibreSDR_USRP/libresdr_b210.bin
-        dest: "{{ (uhd_images.files | map(attribute='path') | first) }}/usrp_b210_fpga.bin"
-        remote_src: true
-      when: uhd_images.files | length > 0
+# Upstream's patch.sh overwrites every usrp_b210_fpga.bin with their
+# libresdr_b210.bin — the custom FPGA bitstream is the whole point of the
+# repo (the USB firmware .hex is stock and already comes from
+# uhd_images_downloader).
+- name: Install the LibreSDR B210 FPGA image into the UHD images dir
+  copy:
+    src: /usr/local/src/LibreSDR_USRP/libresdr_b210.bin
+    dest: "{{ (uhd_images.files | map(attribute='path') | first) }}/usrp_b210_fpga.bin"
+    remote_src: true
+  when: uhd_images.files | length > 0
 
-    - name: Ensure the distribution dir exists
-      file: { path: "{{ sdr_dist_dir }}", state: directory }
-
-    # All paths sit under /usr, and `archive` strips that common root — so the
-    # tarball members are usr-relative (bin/sdrpp, lib/sdrpp/…, share/uhd/…)
-    # and the client unarchives with dest=/usr. The uhd images path is the
-    # VERSIONED dir discovered above, not a hardcoded /usr/share/uhd/images
-    # (which doesn't exist — its absence silently produced a tarball with no
-    # FPGA images at all, 2026-07-15).
-    - name: Package the SDR++ artifact (binary + plugins + uhd images/firmware)
-      archive:
-        path:
-          - /usr/bin/sdrpp
-          - /usr/lib/sdrpp
-          - /usr/share/sdrpp
-          - "{{ (uhd_images.files | map(attribute='path') | first) }}"
-        dest: "{{ sdr_dist_dir }}/sdrpp-dist.tar.gz"
-
-# ------------------ CLIENTS (labs): receive the prebuilt artifact ------------------
-# Skipped under --check: the push is a command task (not run in check mode), so
-# the tarball is never delivered and the unpack would fail on a missing source.
-# This produce-then-consume chain can only run for real.
-- name: Distribute + unpack the prebuilt SDR++ artifact
-  when: inventory_hostname not in groups['server'] and not ansible_check_mode
-  block:
-    # The artifact is built in the SERVER play. A full site.yml run builds it
-    # before this play; but a client-only run (--limit <student>) skips the
-    # server, so it may not exist yet. Skip the distribution gracefully in that
-    # case instead of failing the whole converge.
-    - name: Is the SDR++ artifact built on the server?
-      ansible.builtin.stat:
-        path: "{{ sdr_dist_dir }}/sdrpp-dist.tar.gz"
-      delegate_to: "{{ server_host }}"
-      register: sdr_artifact
-
-    - name: Note that SDR++ hasn't been built yet (skipping distribution)
-      ansible.builtin.debug:
-        msg: >-
-          SDR++ artifact not on {{ server_host }} ({{ sdr_dist_dir }}/sdrpp-dist.tar.gz).
-          Build it by converging the server's sdr role, then re-converge this machine.
-      when: not sdr_artifact.stat.exists
-
-    # `synchronize` (rsync over ssh) delegated to the server HANGS on the first
-    # push to a student: it doesn't force BatchMode/StrictHostKeyChecking, so ssh
-    # blocks on the host-key prompt (or a password fallback) waiting for input.
-    # Use an explicit non-interactive rsync like the zfs push — server -> student
-    # as {{ admin_user }} with the deploy key, reaching it at {{ ansible_host }}.
-    - name: Push the SDR++ artifact from the server (prof->student rsync)
-      ansible.builtin.command:
-        argv:
-          - rsync
-          - "-e"
-          - "ssh -i {{ deploy_key_on_server }} -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10"
-          - "{{ sdr_dist_dir }}/sdrpp-dist.tar.gz"
-          - "{{ admin_user }}@{{ ansible_host | default(inventory_hostname) }}:/tmp/sdrpp-dist.tar.gz"
-      delegate_to: "{{ server_host }}"
-      changed_when: true
-      when: sdr_artifact.stat.exists
-
-    # dest=/usr because the archive's members are usr-relative (common root
-    # stripped by the archive module — see the packaging task).
-    - name: Unpack the SDR++ artifact into place
-      unarchive:
-        src: /tmp/sdrpp-dist.tar.gz
-        dest: /usr
-        remote_src: true
-      when: sdr_artifact.stat.exists
-
-# ------------------ launcher (all machines: built from source, no packaged one) --
+# ------------------ launcher (built from source, no packaged .desktop) --
 - name: Deploy the SDR++ desktop launcher
   copy:
     dest: /usr/share/applications/sdrpp.desktop
