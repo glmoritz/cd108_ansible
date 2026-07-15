@@ -68,6 +68,8 @@ junk, empties Downloads) for the next time a *running* golden is sysprepped.
 - **Client converge**: update `flashtest-inv.yml` to the VM's current campus IP,
   then `site.yml --limit cd108-flashtest -i inventory/hosts.yml -i flashtest-inv.yml …`.
 - Run from the server (`~/cd108_ansible`) or the host (`~/00_tmp/cd108_ansible`);
-  keep them in sync by rsync from the host (there's no git remote on the server).
+  sync flow (since 2026-07-15): commit + push to GitHub
+  (`https://github.com/glmoritz/cd108_ansible.git`, branch `harvest-cd108-golden`),
+  then on the server `git -C ~/cd108_ansible pull --ff-only`. No more rsync.
 - **Don't use `--check`** on this playbook — too many produce-then-consume chains
   make it misleading.
