@@ -149,11 +149,22 @@
 
 # The golden's home datasets carry explicit mountpoints (…/golden/home/<user>);
 # reset them to inherit so they land at /home/<course>, then mount (root — recv
-# ran with -u because non-root can't mount on Linux).
-- name: Reset received homes to inherit the /home mountpoint
-  command: "zfs inherit -r mountpoint {{ zfs_pool }}/home/{{ item }}"
+# ran with -u because non-root can't mount on Linux). `zfs inherit` forces an
+# unmount+remount, which fails ("dataset is busy") on a re-converge while a
+# course user is logged in (broke cd106-05's resume, 2026-07-15) — so check the
+# effective mountpoint first and only inherit when it's actually wrong.
+- name: Read each home's current mountpoint
+  command: "zfs get -H -o value mountpoint {{ zfs_pool }}/home/{{ item }}"
+  register: home_mp_value
   changed_when: false
   loop: "{{ discipline_users }}"
+  loop_control: { label: "{{ item }}" }
+
+- name: Reset received homes to inherit the /home mountpoint (only when wrong)
+  command: "zfs inherit -r mountpoint {{ zfs_pool }}/home/{{ item.item }}"
+  when: item.stdout | trim != '/home/' + item.item
+  loop: "{{ home_mp_value.results }}"
+  loop_control: { label: "{{ item.item }}" }
 
 # `zfs set mountpoint=/home` FORCES an unmount+remount, which fails ("pool or
 # dataset is busy") on a re-run once /home and its child home datasets are already
@@ -168,9 +179,35 @@
   command: "zfs set mountpoint=/home {{ zfs_pool }}/home"
   when: home_mountpoint.stdout | trim != '/home'
 
-- name: Mount all received home datasets (idempotent)
-  command: "zfs mount -a"
+# -O (overlay) everywhere: useradd (common role) pre-creates /home/<user> with
+# its skeleton on the ext4 root BEFORE the pool exists, and plain `zfs mount`
+# refuses non-empty mountpoints — which is why homes showed up EMPTY (skeleton)
+# after a reboot on 2026-07-14. Overlay at converge time here, and via a
+# drop-in for boot-time zfs-mount.service below.
+- name: Mount all received home datasets (idempotent, overlay over skeletons)
+  command: "zfs mount -aO"
   changed_when: false
+
+- name: Drop-in dir for zfs-mount.service
+  file: { path: /etc/systemd/system/zfs-mount.service.d, state: directory, mode: "0755" }
+
+- name: Overlay-mount at boot too (zfs-mount.service drop-in)
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/zfs-mount.service.d/override.conf
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/zfs). -O = overlay-mount: the course homes
+      # mount over non-empty useradd skeleton dirs; without it every boot
+      # leaves /home/<user> showing the empty ext4 skeleton.
+      [Service]
+      ExecStart=
+      ExecStart=/sbin/zfs mount -aO
+  register: zfs_mount_dropin
+
+- name: Reload systemd after the zfs-mount drop-in
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: zfs_mount_dropin.changed
 
 # Downloads is deliberately NOT synced from the golden (see the -p send above).
 # Give each course a fresh EMPTY Downloads dataset instead, owned by its user.

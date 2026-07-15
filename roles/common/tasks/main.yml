@@ -3,16 +3,35 @@
 # untested golden mechanisms (set-hostname-from-mac.sh) are replaced with the
 # idiomatic Ansible path.
 
-# --- Kingston A400 NCQ disarm (MUST be first) -------------------------------
-# The lab SSDs (KINGSTON SA400S3, DRAM-less) hang under NCQ write load and take
-# the SATA link (and the root fs) down with them. Pinning queue_depth=1 gets a
-# machine past the lighter apt-cache writes a few tasks below (where converges
-# died first). Do it at RUNTIME right now, before anything writes, plus a udev
-# rule so it survives reboots. Model-matched, so non-A400 hosts are untouched.
-# CAVEAT (2026-07-14): this is HARDENING, NOT a full fix — with NCQ off the A400s
-# STILL fail under the heavier ZFS receive / concurrent load (`SError: {HostInt/
-# Handshk}` + hard link resets). These drives likely need replacing (the KC600 in
-# cd106-05 converges cleanly). See memory: kingston-a400-ncq-fstrim.
+# --- Kingston A400 SATA disarm (MUST be first) -------------------------------
+# The lab SSDs (KINGSTON SA400S3, DRAM-less) drop the SATA link under converge
+# write load and take the root fs down with them. THE decisive factor
+# (2026-07-15): Ubuntu kernels ship CONFIG_SATA_MOBILE_LPM_POLICY=3 =
+# med_power_with_dipm — DIPM lets the Phison S11 nap the link mid-workload and
+# it fumbles the wake (SError HostInt/Handshk + hard link resets, fatal on
+# 2026-07-14). With LPM forced to max_performance (+ NCQ off below), cd108-01
+# converged green incl. the 37 GB ZFS receive. Clonezilla live (Debian kernel,
+# LPM policy 0) never sees the bug — which is why flashing always worked.
+# Do it at RUNTIME right now, before anything writes, plus udev for reboots.
+- name: Disarm SATA link power management at runtime (DIPM is fatal to A400s)
+  ansible.builtin.shell: |
+    set -eu
+    for f in /sys/class/scsi_host/host*/link_power_management_policy; do
+      [ -f "$f" ] || continue
+      echo max_performance > "$f" 2>/dev/null || true
+    done
+  changed_when: false
+
+- name: Persist SATA LPM max_performance via udev (survives reboot)
+  ansible.builtin.copy:
+    dest: /etc/udev/rules.d/61-sata-lpm-maxperf.rules
+    mode: "0644"
+    content: |
+      # Ubuntu's kernel default med_power_with_dipm makes the lab's Kingston
+      # A400s (Phison S11) drop the SATA link under write load. Force
+      # max_performance on every SATA host. Managed by Ansible (roles/common).
+      ACTION=="add", SUBSYSTEM=="scsi_host", KERNEL=="host*", ATTR{link_power_management_policy}="max_performance"
+
 - name: Disarm A400 NCQ at runtime before any heavy write (queue_depth=1)
   ansible.builtin.shell: |
     set -eu
@@ -77,11 +96,15 @@
 # --- external repos (managed here so key/URL drift is a one-file fix) -----
 # Docker is used everywhere INCLUDING the hub; VS Code + Chrome are lab-workstation
 # apps, so those two repos skip the server.
+# force: true on the keyrings — a keyring that already exists may be damaged
+# (fsck-truncated microsoft.asc broke apt on cd108-01, 2026-07-14); always
+# re-fetch so a converge repairs it. Files are tiny and come via the cacher.
 - name: Add Docker repository key
   get_url:
     url: https://download.docker.com/linux/ubuntu/gpg
     dest: /etc/apt/keyrings/docker.asc
     mode: "0644"
+    force: true
   environment: { https_proxy: "{{ apt_proxy_url }}" }   # tunnel via the cacher (portal)
 
 - name: Add Docker apt repository
@@ -98,6 +121,7 @@
         url: https://packages.microsoft.com/keys/microsoft.asc
         dest: /etc/apt/keyrings/microsoft.asc
         mode: "0644"
+        force: true
       environment: { https_proxy: "{{ apt_proxy_url }}" }   # tunnel via the cacher (portal)
 
     - name: Add VS Code apt repository
@@ -111,6 +135,7 @@
         url: https://dl.google.com/linux/linux_signing_key.pub
         dest: /etc/apt/keyrings/google-chrome.asc
         mode: "0644"
+        force: true
       environment: { https_proxy: "{{ apt_proxy_url }}" }   # tunnel via the cacher (portal)
 
     - name: Add Google Chrome apt repository
