@@ -43,8 +43,13 @@
   notify: unload dvb_usb_rtl28xxu
 
 # ------------------- build + install SDR++ locally -------------------
+# All three fetches below tunnel through the lab cacher: the campus captive
+# portal MITMs direct client HTTPS (cert *.ct.utfpr.edu.br), same as the
+# keyrings in roles/common. github.com and files.ettus.com are in the server's
+# PassThroughPattern (roles/server).
 - name: Clone SDR++ source
   git: { repo: "https://github.com/AlexandreRouma/SDRPlusPlus.git", dest: /usr/local/src/SDRPlusPlus }
+  environment: { https_proxy: "{{ apt_proxy_url }}" }
 
 # Guard on the BUILD-TREE binary, not /usr/bin/sdrpp: machines that received
 # the (broken) server-built tarball already have /usr/bin/sdrpp and must still
@@ -70,11 +75,13 @@
 # current, so re-runs are cheap.
 - name: Download UHD B2xx FPGA/firmware images
   command: uhd_images_downloader -t b2xx
+  environment: { https_proxy: "{{ apt_proxy_url }}" }
   register: uhd_dl
   changed_when: "'Downloading' in (uhd_dl.stdout | default(''))"
 
 - name: Clone LibreSDR firmware repo
   git: { repo: "https://github.com/alphafox02/LibreSDR_USRP", dest: /usr/local/src/LibreSDR_USRP }
+  environment: { https_proxy: "{{ apt_proxy_url }}" }
 
 # The images dir varies by UHD packaging (/usr/share/uhd/images on the PPA,
 # /usr/share/uhd/<ver>/images on some distro builds) — discover, don't hardcode.

@@ -22,7 +22,7 @@
     mode: "0644"
     content: |
       # Managed by Ansible (roles/server). CONNECT passthrough for HTTPS repos.
-      PassThroughPattern: (packages\.microsoft\.com|download\.docker\.com|dl\.google\.com|download\.opensuse\.org|ppa\.launchpadcontent\.net|ppa\.launchpad\.net):443$
+      PassThroughPattern: (packages\.microsoft\.com|download\.docker\.com|dl\.google\.com|download\.opensuse\.org|ppa\.launchpadcontent\.net|ppa\.launchpad\.net|github\.com|files\.ettus\.com):443$
   notify: restart apt-cacher-ng
 
 - name: Ensure apt-cacher-ng is enabled and running
