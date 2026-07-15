@@ -56,9 +56,12 @@
         cmake --install build
       args: { chdir: /usr/local/src/SDRPlusPlus, creates: /usr/bin/sdrpp }
 
+    # The images land in a VERSIONED dir (/usr/share/uhd/<ver>/images, e.g.
+    # 4.9.0) — there is no /usr/share/uhd/images. Glob the guard so it matches
+    # any UHD version.
     - name: Download UHD FPGA/firmware images (once)
       command: uhd_images_downloader
-      args: { creates: /usr/share/uhd/images }
+      args: { creates: "/usr/share/uhd/*/images" }
 
     - name: Clone LibreSDR firmware repo
       git: { repo: "https://github.com/alphafox02/LibreSDR_USRP", dest: /usr/local/src/LibreSDR_USRP }
@@ -83,13 +86,19 @@
     - name: Ensure the distribution dir exists
       file: { path: "{{ sdr_dist_dir }}", state: directory }
 
+    # All paths sit under /usr, and `archive` strips that common root — so the
+    # tarball members are usr-relative (bin/sdrpp, lib/sdrpp/…, share/uhd/…)
+    # and the client unarchives with dest=/usr. The uhd images path is the
+    # VERSIONED dir discovered above, not a hardcoded /usr/share/uhd/images
+    # (which doesn't exist — its absence silently produced a tarball with no
+    # FPGA images at all, 2026-07-15).
     - name: Package the SDR++ artifact (binary + plugins + uhd images/firmware)
       archive:
         path:
           - /usr/bin/sdrpp
           - /usr/lib/sdrpp
           - /usr/share/sdrpp
-          - /usr/share/uhd/images
+          - "{{ (uhd_images.files | map(attribute='path') | first) }}"
         dest: "{{ sdr_dist_dir }}/sdrpp-dist.tar.gz"
 
 # ------------------ CLIENTS (labs): receive the prebuilt artifact ------------------
@@ -133,10 +142,12 @@
       changed_when: true
       when: sdr_artifact.stat.exists
 
+    # dest=/usr because the archive's members are usr-relative (common root
+    # stripped by the archive module — see the packaging task).
     - name: Unpack the SDR++ artifact into place
       unarchive:
         src: /tmp/sdrpp-dist.tar.gz
-        dest: /
+        dest: /usr
         remote_src: true
       when: sdr_artifact.stat.exists
 
