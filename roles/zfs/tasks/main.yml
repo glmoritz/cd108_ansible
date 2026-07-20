@@ -147,6 +147,38 @@
   delegate_to: "{{ server_host }}"
   when: win_present.rc != 0
 
+# The `-R` receive carries the golden's EXPLICIT mountpoint (…/golden/windows),
+# so ssdpool/windows lands at /mnt/ssdpool/golden/windows — but the libvirt
+# domain + winvm_disk_path expect the qcow2 at {{ winvm_disk_path }}. Homes get
+# this same golden-mountpoint reset above; the Windows dataset was missed, so the
+# VM failed to start ("Cannot access storage file …/ssdpool/windows/windows.qcow2:
+# No such file"). Pin it to the canonical mountpoint (only when wrong — a
+# `zfs set mountpoint` forces an unmount+remount that errors "busy" if the VM
+# disk is open, matching the guard pattern used for the homes).
+- name: Does the Windows dataset exist now (received or pre-existing)?
+  command: "zfs list -H -o name {{ zfs_pool }}/windows"
+  register: win_now
+  failed_when: false
+  changed_when: false
+
+- name: Pin the Windows dataset to its canonical mountpoint + mount it
+  when: win_now.rc == 0
+  block:
+    - name: Read the Windows dataset's current mountpoint
+      command: "zfs get -H -o value mountpoint {{ zfs_pool }}/windows"
+      register: win_mp
+      changed_when: false
+
+    - name: Point ssdpool/windows at {{ winvm_disk_path | dirname }} (only if wrong)
+      command: "zfs set mountpoint={{ winvm_disk_path | dirname }} {{ zfs_pool }}/windows"
+      when: win_mp.stdout | trim != (winvm_disk_path | dirname)
+
+    - name: Ensure the Windows dataset is mounted
+      command: "zfs mount {{ zfs_pool }}/windows"
+      register: win_mount
+      changed_when: win_mount.rc == 0
+      failed_when: win_mount.rc != 0 and 'already mounted' not in win_mount.stderr
+
 # The golden's home datasets carry explicit mountpoints (…/golden/home/<user>);
 # reset them to inherit so they land at /home/<course>, then mount (root — recv
 # ran with -u because non-root can't mount on Linux). `zfs inherit` forces an
@@ -232,3 +264,32 @@
     owner: "{{ item }}"
     group: "{{ item }}"
   loop: "{{ discipline_users }}"
+
+# Chrome/Chromium won't start when its profile carries a SingletonLock that names
+# a DIFFERENT host: it assumes the profile is open "on another computer", locks
+# it, and exits — silently, because it can't draw the warning dialog in a fresh
+# session (only "Unable to show message box" hits the log). Every course/admin
+# home is ZFS-cloned from the golden (authored on cd108-flashtest), so each
+# ~/.config/google-chrome ships `SingletonLock -> cd108-flashtest-<pid>` → chrome
+# dies on first launch on every clone. Clear ONLY cross-host locks: a lock naming
+# THIS host is a live local Chrome and must be left alone. Idempotent (nothing to
+# do once the stale locks are gone) and runs here because homes are mounted only
+# after the receive above (the desktop role runs before zfs).
+- name: Clear stale cross-host Chrome/Chromium SingletonLock from the cloned homes
+  shell: |
+    changed=0
+    host=$(hostname)
+    for u in {{ ([admin_user] + discipline_users) | join(' ') }}; do
+      for cfg in "/home/$u/.config/google-chrome" "/home/$u/.config/chromium"; do
+        lock="$cfg/SingletonLock"
+        [ -L "$lock" ] || continue
+        tgt=$(readlink "$lock")
+        if [ "${tgt%-*}" != "$host" ]; then
+          rm -f "$cfg/SingletonLock" "$cfg/SingletonCookie" "$cfg/SingletonSocket"
+          changed=1
+        fi
+      done
+    done
+    echo "changed=$changed"
+  register: chrome_singleton
+  changed_when: "'changed=1' in chrome_singleton.stdout"

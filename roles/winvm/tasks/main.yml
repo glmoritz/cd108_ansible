@@ -23,10 +23,15 @@
       # Fails loudly if the golden didn't ship @{{ winvm_revert_snapshot }} — the
       # entire revert UX depends on that snapshot being present.
 
+    # `user:` must be a STRING — this community.general.sudoers version str()'s a
+    # list into a Python repr (`['microcontroladores', 'redes', 'estudante']`),
+    # which visudo -c accepts as one (nonexistent) username, so the rule passes
+    # validation but matches NO real user → estudante was prompted for a password.
+    # Join to a comma-separated sudoers user list instead.
     - name: Allow course accounts to roll the VM back to clean (passwordless, scoped)
       community.general.sudoers:
         name: winvm-revert
-        user: "{{ discipline_users }}"
+        user: "{{ discipline_users | join(',') }}"
         nopassword: true
         commands: "/usr/sbin/zfs rollback -r {{ winvm_dataset }}@{{ winvm_revert_snapshot }}"
         validation: required
