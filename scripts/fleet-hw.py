@@ -38,16 +38,41 @@ def inventory_server(path):
     return None
 
 
+def read_log(path, server):
+    """Return the raw beacons.jsonl text, seamlessly whether run on the server or off.
+
+    On the server the receiver's log is now group-readable (roles/server runs the
+    receiver as a static `phonehome` user, not a DynamicUser jail under
+    /var/log/private), so a plain local/remote `cat` works with no sudo. We still
+    fall back to a NON-interactive `sudo -n` for older/locked-down deployments —
+    never an interactive one, so this can't hang on a password prompt.
+    """
+    if path:
+        return open(path).read()
+    # Running ON the server: read the local log directly (no ssh, no sudo).
+    if os.path.exists(REMOTE_LOG):
+        try:
+            return open(REMOTE_LOG).read()
+        except PermissionError:
+            r = subprocess.run(["sudo", "-n", "cat", REMOTE_LOG],
+                               capture_output=True, text=True)
+            if r.returncode == 0:
+                return r.stdout
+            sys.exit(f"can't read {REMOTE_LOG} locally as {os.environ.get('USER', '?')} "
+                     f"(permission). Re-converge roles/server, or run with sudo.")
+    # Off the server: pull it over ssh. Plain cat first (log is group-readable),
+    # sudo -n as a non-interactive fallback only.
+    r = subprocess.run(
+        ["ssh", server, f"cat {REMOTE_LOG} 2>/dev/null || sudo -n cat {REMOTE_LOG}"],
+        capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit(f"could not read {REMOTE_LOG} on {server}:\n{r.stderr.strip()}")
+    return r.stdout
+
+
 def load_latest(path, server):
     """Return {key: rec} — the newest beacon per machine (machine_id|hostname)."""
-    if path:
-        raw = open(path).read()
-    else:
-        r = subprocess.run(["ssh", server, f"sudo cat {REMOTE_LOG}"],
-                           capture_output=True, text=True)
-        if r.returncode != 0:
-            sys.exit(f"could not read {REMOTE_LOG} on {server}:\n{r.stderr.strip()}")
-        raw = r.stdout
+    raw = read_log(path, server)
     latest = {}
     for line in raw.splitlines():
         line = line.strip()

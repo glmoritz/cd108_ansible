@@ -135,9 +135,24 @@
 
 # --- Boot-beacon receiver --------------------------------------------------
 # Logs one JSONL line per node phone-home POST to /var/log/phone-home/beacons.jsonl
-# (server adds recv_ts + source IP). stdlib Python, no deps; systemd DynamicUser
-# with a source-IP allowlist ({{ phone_home_allowed }}). Reporter is baked into
-# every machine by roles/common; reconcile with scripts/scan-beacons.py.
+# (server adds recv_ts + source IP). stdlib Python, no deps; runs as a static
+# `phonehome` system user (NOT DynamicUser) with a source-IP allowlist
+# ({{ phone_home_allowed }}). Reporter is baked into every machine by roles/common;
+# reconcile with scripts/scan-beacons.py.
+#
+# Why static user, not DynamicUser: with DynamicUser+LogsDirectory systemd stores
+# the log under /var/log/private/phone-home, and /var/log/private is 0700 root — so
+# the admin (daelt) can't read beacons.jsonl without sudo, defeating
+# scripts/fleet-hw.py. A static user keeps LogsDirectory at a plain, group-readable
+# /var/log/phone-home instead.
+- name: System user for the boot-beacon receiver
+  ansible.builtin.user:
+    name: phonehome
+    system: true
+    shell: /usr/sbin/nologin
+    home: /nonexistent
+    create_home: false
+
 - name: Directory for the boot-beacon receiver
   file:
     path: /opt/phone-home
@@ -220,8 +235,10 @@
       Environment=PHONE_HOME_PORT={{ phone_home_port | default(8888) }}
       Environment=PHONE_HOME_ALLOWED={{ phone_home_allowed | default('103.0.0.0/19,192.168.122.0/24,127.0.0.0/8') }}
       ExecStart=/usr/bin/python3 /opt/phone-home/receiver.py
-      DynamicUser=yes
+      User=phonehome
+      Group=phonehome
       LogsDirectory=phone-home
+      LogsDirectoryMode=0755
       Restart=always
       RestartSec=2
       NoNewPrivileges=yes
