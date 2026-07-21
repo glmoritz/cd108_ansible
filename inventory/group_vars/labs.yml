@@ -14,7 +14,17 @@
 #   * Leave it empty to fall back to LINK-LOCAL (same L2 segment only), using
 #     the control node's uplink interface as the IPv6 zone id.
 #
-# A per-host ansible_host in hosts.yml (e.g. a pinned IPv4) overrides this.
+# Addressing precedence (highest first):
+#   1. a per-host ansible_host in hosts.yml / a `-i overlay.yml` pin (a host var
+#      always beats this group var) — the manual override;
+#   2. the address the machine last PHONED HOME from (beacon_ip, matched by MAC)
+#      — a known-reachable IP, so it covers machines that never get EUI-64 IPv6;
+#   3. the EUI-64 IPv6 derived from the MAC (below) — the zero-infra default,
+#      used until a machine has phoned home at least once.
+# There is no per-connection fallback in Ansible: it dials whatever ansible_host
+# resolves to, so the beacon must be *preferred* (not a runtime retry) for a
+# v6-less box to be reachable. The beacon log lives on the control node (the
+# server); reading it off-server just yields '' (errors='ignore') → EUI-64.
                                         # NOTE: single TRAILING COLON, not "::".
                                         # It is string-concatenated with the full
                                         # 64-bit EUI-64 ifid (`{{prefix}}{{ifid}}`),
@@ -28,7 +38,19 @@ lab_ipv6_prefix: "2801:82:c004:103:"    # router-advertised /64 is 2801:82:c004:
 # only used as the IPv6 zone id in the link-local fallback (empty prefix).
 lab_uplink_iface: eno1
 
-ansible_host: >-
+# The phone-home beacon log on the control node (the server). See beacon_ip.
+beacon_log: /var/log/phone-home/beacons.jsonl
+
+# The address the machine last phoned home from (matched by MAC), or '' if it
+# never has / the log isn't here. errors='ignore' keeps this empty (→ EUI-64)
+# when converging from a box that isn't the hub.
+lab_beacon_ip: "{{ lookup('file', beacon_log, errors='ignore') | default('', true) | beacon_ip(mac) }}"
+
+# The zero-infra EUI-64 default (global if a prefix is set, else link-local).
+lab_eui64_host: >-
   {{ (lab_ipv6_prefix ~ (mac | eui64_ifid))
      if (lab_ipv6_prefix | length > 0)
      else (mac | eui64_linklocal) ~ '%' ~ lab_uplink_iface }}
+
+# Prefer the known-reachable phone-home address; fall back to EUI-64.
+ansible_host: "{{ lab_beacon_ip if (lab_beacon_ip | length > 0) else lab_eui64_host }}"
