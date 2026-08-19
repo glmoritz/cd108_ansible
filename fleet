@@ -138,8 +138,13 @@ case "$cmd" in
     ansible-playbook reset-homes.yml -i "$INV" --limit "$target" "${OVERLAY[@]}" "${AUTH[@]}" ;;
 
   ssh)
-    ip="$(fact_of "$target" ansible_host)"; [ -n "$ip" ] || ip="$target"
-    usr="$(fact_of "$target" ansible_user)"; [ -n "$usr" ] || usr=daelt
+    # ansible_host/ansible_user are runtime Jinja (beacon IP, admin_user) that
+    # ansible-inventory won't render, so resolve the address through ansible itself.
+    usr="${FLEET_SSH_USER:-daelt}"
+    ip="$(ansible "$target" -i "$INV" "${AUTH[@]}" -m debug -a var=ansible_host 2>/dev/null \
+          | sed -n 's/.*"ansible_host": "\(.*\)".*/\1/p' | head -1)"
+    [ -n "$ip" ] || ip="$target"
+    echo "-- ssh $usr@$ip" >&2
     exec ssh -i "$KEY" "$usr@$ip" ;;
 
   *) die "unknown command '$cmd' (try ./fleet --help)";;
