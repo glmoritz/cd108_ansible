@@ -370,6 +370,67 @@
     - { key: GRUB_DISABLE_OS_PROBER, value: "true" }
   notify: update grub
 
+# --- Kill the phantom "Windows Boot Manager" (the Wake-on-LAN brick) --------
+# os-prober off (above) only cleans GRUB's *menu*. The real hazard is a level
+# lower, in UEFI firmware NVRAM: the golden ESP still carries the leftover
+# \EFI\Microsoft\Boot\bootmgfw.efi (~1.6 MB) from its dual-boot past, and every
+# machine's firmware still lists a "Windows Boot Manager" entry AHEAD of ubuntu
+# in BootOrder. On a cold boot the firmware launches that stale bootmgfw, which
+# BSODs (the Windows it wants is long gone) — the box never reaches Ubuntu, so
+# auto-sleep's Wake-on-LAN can't recover it. Permanent three-layer fix, so it
+# survives even a re-flash of the current golden:
+#   1. delete the Microsoft loader from the ESP  -> nothing left to launch,
+#   2. delete every NVRAM "Windows Boot Manager" entry, and
+#   3. explicitly pin ubuntu first in BootOrder.
+# Steps 1-2 alone are enough to stop the BSOD, but they don't guarantee ubuntu
+# boots *first*: on some boards the Windows entry didn't sit immediately before
+# ubuntu (a firmware-generated raw-disk entry did), so deleting it leaves that
+# disk entry at the front. It usually chains into GRUB, but it's ambiguous and
+# can waste — or lose — a boot. Step 3 removes all doubt.
+- name: Remove the stale Microsoft/Windows loader from the ESP
+  ansible.builtin.file:
+    path: /boot/efi/EFI/Microsoft
+    state: absent
+  tags: [efi, boot]
+
+- name: Read the current UEFI boot entries
+  ansible.builtin.command: efibootmgr
+  register: efi_entries
+  changed_when: false
+  tags: [efi, boot]
+
+- name: Delete every phantom "Windows Boot Manager" NVRAM entry
+  ansible.builtin.command: "efibootmgr -b {{ item }} -B"
+  loop: >-
+    {{ efi_entries.stdout_lines
+       | select('search', 'Windows Boot Manager')
+       | map('regex_replace', '^Boot([0-9A-Fa-f]{4}).*$', '\1')
+       | list }}
+  tags: [efi, boot]
+
+- name: Pin ubuntu first in the UEFI boot order
+  # Steps 1-2 remove the BSOD hazard; this guarantees ubuntu actually boots
+  # first even when a firmware-generated raw-disk entry (not the Windows one)
+  # was sitting at the front. Idempotent: only reorders when needed.
+  ansible.builtin.shell: |
+    set -euo pipefail
+    ub=$(efibootmgr | sed -E 's/\t.*$//' \
+         | grep -iE '^Boot[0-9A-Fa-f]{4}\*? ubuntu$' | head -1 \
+         | sed -E 's/^Boot([0-9A-Fa-f]{4}).*/\1/')
+    [ -z "${ub:-}" ] && { echo 'no-ubuntu-entry'; exit 0; }
+    cur=$(efibootmgr | awk '/^BootOrder:/{print $2}')
+    rest=$(printf '%s' "$cur" | tr ',' '\n' | grep -vx "$ub" | paste -sd, -)
+    want="$ub${rest:+,$rest}"
+    if [ "$cur" != "$want" ]; then
+      efibootmgr -o "$want" >/dev/null
+      echo "reordered:$cur -> $want"
+    else
+      echo "already-first:$cur"
+    fi
+  register: efi_pin
+  changed_when: "'reordered:' in efi_pin.stdout"
+  tags: [efi, boot]
+
 # --- system tweaks (exact values confirmed from the golden) --------------
 # Resolved at harvest: swap is an image-owned /swap.img swapfile; RTC is UTC
 # (no set-local-rtc needed now Windows is a VM); no idle-shutdown cron exists;
