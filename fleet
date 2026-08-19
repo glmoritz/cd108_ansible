@@ -108,8 +108,12 @@ case "$cmd" in
 
   shutdown)
     mapfile -t hs < <(hosts_of "$target"); confirm "shut down" "${#hs[@]}"
-    ansible "$target" -i "$INV" -b -m shell -a "systemctl poweroff --no-block" "${AUTH[@]}"
-    echo "-- power-off signalled; bring them back with: ./fleet wake $target" ;;
+    # Schedule the poweroff a few seconds out via a transient timer so the SSH
+    # command returns cleanly first — otherwise the box dies mid-reply and
+    # ansible reports a misleading UNREACHABLE.
+    ansible "$target" -i "$INV" -b -m shell \
+      -a "systemd-run -q --collect --on-active=3s systemctl poweroff" "${AUTH[@]}"
+    echo "-- power-off scheduled (~3s); bring them back with: ./fleet wake $target" ;;
 
   update)
     ansible "$target" -i "$INV" -b -m apt \
