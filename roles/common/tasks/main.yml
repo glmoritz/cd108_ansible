@@ -427,6 +427,8 @@
     else
       echo "already-first:$cur"
     fi
+  args:
+    executable: /bin/bash
   register: efi_pin
   changed_when: "'reordered:' in efi_pin.stdout"
   tags: [efi, boot]
