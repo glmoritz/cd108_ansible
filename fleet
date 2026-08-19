@@ -36,9 +36,9 @@ need(){ command -v "$1" >/dev/null 2>&1 || die "missing '$1' — run this on cd1
 [ -f "$VAULT" ] || die "vault password '$VAULT' not found — run on cd108-server."
 
 hosts_of(){ ansible "$1" -i "$INV" --list-hosts 2>/dev/null | sed '1d;s/^[[:space:]]*//'; }
-fact_of(){ # fact_of HOST KEY  -> value from ansible-inventory
-  ansible-inventory -i "$INV" --host "$1" 2>/dev/null \
-    | python3 -c "import sys,json;print(json.load(sys.stdin).get('$2',''))"
+fact_of(){ # fact_of HOST KEY  -> value from ansible-inventory (vaulted vars need the pass)
+  ansible-inventory -i "$INV" --vault-password-file "$VAULT" --host "$1" 2>/dev/null \
+    | python3 -c "import sys,json;print(json.load(sys.stdin).get('$2',''))" 2>/dev/null
 }
 confirm(){ # confirm ACTION COUNT   (skip with FLEET_YES=1)
   [ "${FLEET_YES:-0}" = 1 ] && return 0
@@ -51,6 +51,7 @@ usage(){
   cat <<'EOF'
 Commands:
   status   TARGET     ping every host (UP = reachable over SSH)
+  last-seen [FILTER]  when each machine last phoned home (dead-machine detector)
   wake     TARGET     send Wake-on-LAN magic packets
   reboot   TARGET     reboot and wait for each host to return
   shutdown TARGET     graceful power-off (bring back with 'wake')
@@ -76,6 +77,12 @@ EOF
 
 cmd="${1:-}"; target="${2:-}"
 case "$cmd" in ""|-h|--help|help) usage; exit 0;; esac
+
+# last-seen takes an optional filter, not a required target — handle it first.
+if [ "$cmd" = last-seen ] || [ "$cmd" = lastseen ]; then
+  exec python3 scripts/fleet-lastseen.py "${@:2}"
+fi
+
 [ -n "$target" ] || die "need a TARGET (host, group, or 'all'). Try ./fleet --help"
 
 case "$cmd" in
@@ -110,8 +117,8 @@ case "$cmd" in
 
   boot)
     ansible "$target" -i "$INV" -b -m shell -a \
-      'printf "%s: " "$(hostname)"; efibootmgr | grep -E "^BootOrder|Windows Boot Manager" | tr "\n" "  "; echo' \
-      "${AUTH[@]}" -o 2>/dev/null | sed -E 's/ \| CHANGED[^)]*\) //' | sort ;;
+      'efibootmgr | grep -E "^BootOrder|Windows Boot Manager" | tr "\n" "  "; echo' \
+      "${AUTH[@]}" -o 2>/dev/null | sed -E 's/ \| CHANGED \| rc=0 \| \(stdout\) /  /' | sort ;;
 
   efifix)
     ansible-playbook site.yml -i "$INV" --tags efi --limit "$target" "${OVERLAY[@]}" "${AUTH[@]}" ;;

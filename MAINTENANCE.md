@@ -58,7 +58,18 @@ has VS Code as a snap instead, add `./fleet ssh <host>` → `sudo snap refresh`.
 | Inspect boot order | `./fleet boot cd108-05` | should read `BootOrder` with `ubuntu` first, no Windows |
 | List MACs | `./fleet macs cd108` | |
 | Shell into one box | `./fleet ssh cd108-05` | |
-| Hardware inventory | `python3 scripts/fleet-hw.py` | from the phone-home beacons |
+| **Who's gone quiet** (dead-machine check) | `./fleet last-seen` | last phone-home per host, oldest first |
+| Hardware inventory | `python3 scripts/fleet-hw.py` | model/CPU/RAM/disks from the beacons |
+
+### Spotting dead machines
+```bash
+./fleet last-seen              # every lab machine, most-stale first
+./fleet last-seen cd108        # just room cd108
+./fleet last-seen --stale 3    # flag anything silent > 3 days
+```
+Each machine phones home on every boot, so a host that's `STALE?` or `never
+seen` while its neighbours are current is the one to physically check. `AGE` is
+days since its last beacon.
 
 ### Reset homes to a clean state
 `./fleet restore-homes <target>` re-sends the freshly-built **golden home** from
