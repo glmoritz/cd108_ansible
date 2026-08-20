@@ -143,8 +143,11 @@ case "$cmd" in
     [ "${#up[@]}" -eq 0 ] && { echo "fleet fix-dpkg: no reachable hosts in '$target'."; exit 0; }
     limit="$(IFS=,; echo "${up[*]}")"
     echo "-- repairing dpkg on ${#up[@]} host(s): $limit"
+    # Exit on the remaining-broken count: 0 -> green (clean), >0 -> red (that host
+    # is genuinely still broken). grep -c prints 0 but *exits 1* on no matches, so
+    # guard it with || true, then exit on the captured count.
     ansible "$limit" -i "$INV" -b -m shell \
-      -a 'for i in $(seq 1 8); do dpkg --configure -a && break; sleep 3; done; printf "AUDIT-REMAINING:"; dpkg --audit | grep -c "^ "' \
+      -a 'for i in $(seq 1 8); do dpkg --configure -a && break; sleep 3; done; rem=$(dpkg --audit 2>/dev/null | grep -c "^ " || true); echo "AUDIT-REMAINING:$rem"; exit "$rem"' \
       "${AUTH[@]}" ;;
 
   boot)
