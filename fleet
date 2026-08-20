@@ -116,7 +116,21 @@ case "$cmd" in
     echo "-- power-off scheduled (~3s); bring them back with: ./fleet wake $target" ;;
 
   update)
-    ansible "$target" -i "$INV" -b -m apt \
+    # Patch only the hosts that are actually up — an offline machine would
+    # otherwise print a scary red UNREACHABLE block. We report the skipped ones
+    # plainly; any FAILED that survives here is a *real* apt problem worth seeing.
+    mapfile -t want < <(hosts_of "$target" | sort)
+    mapfile -t up   < <(ansible "$target" -i "$INV" -m ping "${AUTH[@]}" -o 2>/dev/null \
+                        | sed -n 's/ | SUCCESS.*//p' | sort)
+    if [ "${#up[@]}" -eq 0 ]; then
+      echo "fleet update: no reachable hosts in '$target' (all offline?). Try: ./fleet wake $target"
+      exit 0
+    fi
+    offline="$(comm -23 <(printf '%s\n' "${want[@]}") <(printf '%s\n' "${up[@]}") | paste -sd, -)"
+    [ -n "$offline" ] && echo "-- skipping offline (wake them first): $offline"
+    limit="$(IFS=,; echo "${up[*]}")"
+    echo "-- updating ${#up[@]} reachable host(s): $limit"
+    ansible "$limit" -i "$INV" -b -m apt \
       -a "update_cache=yes cache_valid_time=0 upgrade=dist" "${AUTH[@]}" ;;
 
   boot)
