@@ -496,8 +496,14 @@
   changed_when: "'CHANGED=1' in eui64_pin.stdout"
   notify: reload networkmanager
 
-# Wake-on-LAN: the NIC supports magic-packet wake but ships disabled. A udev
-# rule is the standard persistent way (no dedicated Ansible module).
+# Wake-on-LAN: the NIC supports magic-packet wake but ships disabled. Two layers,
+# because arming it ONCE at boot is not enough on every NIC:
+#   1. udev rule — arms `wol g` at device `add` (early). Works on Realtek r8169.
+#   2. arm-wol.service — re-arms AFTER the network is up. The Intel e1000e (the
+#      relocated cd108-24..28 boxes) resets WoL back to `d` while the driver
+#      initialises, so the early udev arm loses the race; re-arming past the
+#      settle window is what sticks (confirmed 2026-08-20 — the old "wait a few
+#      minutes then arm" workaround, now automated).
 - name: Enable Wake-on-LAN (magic packet) via udev rule
   copy:
     dest: /etc/udev/rules.d/70-wol.rules
@@ -505,6 +511,48 @@
       ACTION=="add", SUBSYSTEM=="net", NAME=="{{ wol_interface }}", RUN+="/usr/sbin/ethtool -s {{ wol_interface }} wol g"
   when: wol_interface | length > 0
   notify: reload udev
+
+- name: Install the WoL re-arm script (survives the e1000e early reset)
+  copy:
+    dest: /usr/local/sbin/arm-wol.sh
+    mode: "0755"
+    content: |
+      #!/bin/sh
+      # Arm Wake-on-LAN on the primary NIC, re-asserting across the first few
+      # minutes: some drivers (Intel e1000e) reset WoL to 'd' as they come up,
+      # so a single early arm is lost. Managed by Ansible (roles/common).
+      iface=$(ip route 2>/dev/null | awk '/^default/{print $5; exit}')
+      [ -n "$iface" ] || exit 0
+      n=0
+      while [ "$n" -lt 11 ]; do
+          ethtool -s "$iface" wol g 2>/dev/null || true
+          n=$((n + 1))
+          sleep 20
+      done
+
+- name: Install the WoL re-arm service
+  copy:
+    dest: /etc/systemd/system/arm-wol.service
+    content: |
+      [Unit]
+      Description=Arm Wake-on-LAN on the primary NIC (survives e1000e early reset)
+      After=network-online.target NetworkManager-wait-online.service
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/arm-wol.sh
+      RemainAfterExit=yes
+
+      [Install]
+      WantedBy=multi-user.target
+  register: arm_wol_unit
+
+- name: Enable the WoL re-arm service
+  systemd:
+    name: arm-wol.service
+    enabled: true
+    daemon_reload: "{{ arm_wol_unit is changed }}"
 
 # TODO(harvest): udev rule giving the practice UART kits a STABLE /dev symlink.
 #   ST-Link/J-Link/OpenOCD rules come from their -udev-rules packages already;
