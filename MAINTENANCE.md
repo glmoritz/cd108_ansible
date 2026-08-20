@@ -129,6 +129,41 @@ These are the things that will bite you 3 months from now if they're not true.
 - **A whole room is gone.** Check the server itself is up and on the lab L2, and
   that the NIC uplink hasn't hung (`scripts/fix-e1000e-hang.sh` on the KVM host).
 
+### apt/dpkg breaks with I/O errors during an upgrade (Kingston A400)
+Symptom: `./fleet update` (or a manual `apt upgrade`) fails on many machines
+with, in `dmesg`, `ata..: failed command: WRITE DMA EXT` / `host bus error` and
+`EXT4-fs ... I/O error`, and apt ends with *"N not fully installed"* (usually
+`plymouth` + its themes, from `update-initramfs`). This is the **DRAM-less
+Kingston A400** going marginal under a big sustained write — not a repo or apt
+problem. LPM=max_performance, NCQ-off and fstrim-mask are already forced by the
+role; the durable fix is the **3.0 Gbps SATA link cap** (in `roles/common`,
+`GRUB_CMDLINE_LINUX=libata.force=3.0G`), which needs a converge + reboot to arm.
+
+> ⚠️ The failed write was regenerating the initramfs for the **running** kernel.
+> **Repair dpkg before rebooting** or a machine may not boot.
+
+Recovery, in order (do one step, confirm, then the next):
+```bash
+# 1. Repair the half-configured packages (retries through the flaky writes).
+./fleet fix-dpkg cd108            # AUDIT-REMAINING: 0 on every host = clean
+
+# 2. Apply the 3.0 Gbps cap (writes grub; small, low-risk).
+git pull
+ansible-playbook site.yml -i inventory/hosts.yml --tags common --limit cd108 \
+  -e @~/ip-overlay.yml \
+  --vault-password-file ~/.vault_pass --become-password-file ~/.vault_pass
+
+# 3. Reboot to activate the cap (safe now — initramfs is valid again).
+./fleet reboot cd108
+
+# 4. Verify: link came up capped and the error storms are gone.
+./fleet ssh cd108-19    # then:  dmesg | grep -i 'SATA link up'   (expect 3.0 Gbps)
+```
+After the cap is active, future kernel/initramfs upgrades should stop tripping
+the A400. If `fix-dpkg` still shows a non-zero count on a host, re-run it for
+that host; a disk that *never* completes may be genuinely failing (check
+`smartctl -H /dev/sda`).
+
 ---
 
 ## Still open (not covered by `fleet`)

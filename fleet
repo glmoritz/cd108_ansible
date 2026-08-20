@@ -56,6 +56,7 @@ Commands:
   reboot   TARGET     reboot and wait for each host to return
   shutdown TARGET     graceful power-off (bring back with 'wake')
   update   TARGET     apt update + full-upgrade (VS Code included)
+  fix-dpkg TARGET     repair half-configured packages (A400 I/O-error recovery)
   boot     TARGET     show UEFI BootOrder + any Windows entry (diagnostics)
   efifix   TARGET     re-apply the phantom-Windows EFI fix (site.yml --tags efi)
   converge TARGET     full site.yml converge
@@ -132,6 +133,19 @@ case "$cmd" in
     echo "-- updating ${#up[@]} reachable host(s): $limit"
     ansible "$limit" -i "$INV" -b -m apt \
       -a "update_cache=yes cache_valid_time=0 upgrade=dist" "${AUTH[@]}" ;;
+
+  fix-dpkg)
+    # A400 SATA I/O errors during a big write (update-initramfs) can leave dpkg
+    # half-configured. Retry `dpkg --configure -a` a few times — the flaky write
+    # usually lands within a couple of tries — then report what's still broken.
+    mapfile -t up < <(ansible "$target" -i "$INV" -m ping "${AUTH[@]}" -o 2>/dev/null \
+                      | sed -n 's/ | SUCCESS.*//p')
+    [ "${#up[@]}" -eq 0 ] && { echo "fleet fix-dpkg: no reachable hosts in '$target'."; exit 0; }
+    limit="$(IFS=,; echo "${up[*]}")"
+    echo "-- repairing dpkg on ${#up[@]} host(s): $limit"
+    ansible "$limit" -i "$INV" -b -m shell \
+      -a 'for i in $(seq 1 8); do dpkg --configure -a && break; sleep 3; done; printf "AUDIT-REMAINING:"; dpkg --audit | grep -c "^ "' \
+      "${AUTH[@]}" ;;
 
   boot)
     ansible "$target" -i "$INV" -b -m shell -a \
