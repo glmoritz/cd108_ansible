@@ -368,6 +368,14 @@
     # is no real Windows install (it's a VM now), so turn os-prober off to keep
     # the menu clean — a plain Ubuntu boot with no phantom Windows entry.
     - { key: GRUB_DISABLE_OS_PROBER, value: "true" }
+    # Kingston A400 (DRAM-less, Phison S11) throws SATA "host bus error" storms
+    # (WRITE DMA EXT failures -> ext4 I/O error) under sustained writes like
+    # update-initramfs, even with LPM=max_performance + NCQ off (both forced at
+    # the top of this role). Capping the SATA link to 3.0 Gbps is a known
+    # stabiliser for these controllers. Negotiated at boot (no runtime link
+    # reset), applies to every port — harmless to the 7200rpm HDDs, which don't
+    # exceed 3.0G anyway. GRUB_CMDLINE_LINUX (not _DEFAULT) so recovery boots too.
+    - { key: GRUB_CMDLINE_LINUX, value: '"libata.force=3.0G"' }
   notify: update grub
 
 # --- Kill the phantom "Windows Boot Manager" (the Wake-on-LAN brick) --------
