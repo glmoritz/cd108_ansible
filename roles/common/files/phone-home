@@ -19,6 +19,7 @@ import os
 import re
 import socket
 import subprocess
+import time
 import urllib.request
 from datetime import datetime, timezone
 
@@ -214,13 +215,23 @@ def build_payload():
 
 
 def main():
-    try:
-        body = json.dumps(build_payload()).encode()
-        req = urllib.request.Request(
-            URL, data=body, headers={"Content-Type": "application/json"})
-        urllib.request.urlopen(req, timeout=5).read()
-    except Exception:
-        pass  # best-effort; boot must never fail on the beacon
+    # network-online.target fires before this host's network is actually
+    # usable often enough (DNS not warm yet, IPv6 SLAAC still pending) that a
+    # single-shot POST silently loses the beacon on an otherwise-healthy boot
+    # (seen on cd108-24: booted fine for days, zero beacons delivered, worked
+    # instantly by hand once the network had settled). Retry with backoff
+    # instead of a bare best-effort try, but still never fail the boot.
+    body = json.dumps(build_payload()).encode()
+    for delay in (0, 2, 4, 8, 8, 8):
+        if delay:
+            time.sleep(delay)
+        try:
+            req = urllib.request.Request(
+                URL, data=body, headers={"Content-Type": "application/json"})
+            urllib.request.urlopen(req, timeout=5).read()
+            return
+        except Exception:
+            continue
 
 
 if __name__ == "__main__":
