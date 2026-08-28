@@ -174,3 +174,22 @@ that host; a disk that *never* completes may be genuinely failing (check
   it's only safe once check #1 (WoL-from-off) passes fleet-wide.
 - **Unattended security updates** are not enabled; patching is manual via
   `./fleet update`. Consider `unattended-upgrades` if you'd rather not remember.
+- **TODO: rebuild the sda7 recovery partition + make it GRUB-bootable**
+  (imaging-automation.md Stage 2). The `sda7` "recovery" partition every clone
+  carries is a **stale embedded Clonezilla Live 3.1.1-27**, captured from the
+  golden years ago — it predates the Clonezilla version the golden images are
+  actually captured/restored with now (**3.3.2-31**), so it likely can't
+  restore current images. A matching ISO is already on hand:
+  `moritz-desktop:/var/lib/libvirt/boot/clonezilla-3.3.2-31-amd64.iso` (libvirt
+  pool `boot-scratch`) — no download needed. Plan: use `ocs-live-dev` (same
+  tool the original embed used, per `/live-hd/Clonezilla-Live-Version` on the
+  partition) to rewrite `sda7` with 3.3.2, with the `ocs_prerun`/`ocs_live_run`
+  unattended-restore params baked in (mount NFS repo + `layout-disk.sh` +
+  `restoreparts <golden_image_name> sda1 sda3 sda7`, see
+  `docs/imaging-automation.md`), then add a GRUB2 custom menu entry
+  (`/etc/grub.d/40_custom` + `update-grub`) that boots `sda7`'s
+  `vmlinuz`/`initrd.img` — remembering the backslash-escape GRUB2 needs on
+  quoted boot params or Clonezilla won't see them in `/proc/cmdline`. Must be
+  done at the machine's own console (Clonezilla can't image/rebuild itself
+  from the control node). **Test on `cd108-21` only** (mid-reflash 2026-08-28)
+  before considering a fleet-wide rollout — do not converge everyone.
