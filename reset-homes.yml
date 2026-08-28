@@ -21,6 +21,18 @@
   serial: "{{ reset_serial | default(4) }}"
   gather_facts: false
   tasks:
+    # A plain (non-incremental) `zfs recv -F` still refuses to clobber a
+    # destination that carries snapshots foreign to the incoming stream --
+    # e.g. sanoid's own autosnap_* snapshots, which every already-deployed
+    # home accumulates. Destroy the destination first so the reset is truly
+    # clean (this whole playbook is documented-destructive already).
+    - name: Destroy the existing home dataset (with its snapshots) for a clean receive
+      command: "zfs destroy -r {{ zfs_pool }}/home/{{ item }}"
+      loop: "{{ discipline_users }}"
+      failed_when: destroy_home.rc != 0 and 'dataset does not exist' not in destroy_home.stderr
+      register: destroy_home
+      changed_when: destroy_home.rc == 0
+
     - name: Snapshot then send each course golden home onto this machine
       shell: >-
         zfs send {{ zfs_pool_server }}/golden/home/{{ item }}@{{ golden_snapshot }}
