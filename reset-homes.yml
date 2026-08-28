@@ -22,9 +22,9 @@
   gather_facts: false
   tasks:
     - name: Snapshot then send each course golden home onto this machine
-      shell: >
+      shell: >-
         zfs send {{ zfs_pool_server }}/golden/home/{{ item }}@{{ golden_snapshot }}
         | mbuffer -q
-        | ssh {{ inventory_hostname }} "zfs recv -F {{ zfs_pool }}/home/{{ item }}"
+        | ssh -i {{ deploy_key_on_server }} -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{ admin_user }}@{{ ansible_host | default(inventory_hostname) }} "zfs recv -F {{ zfs_pool }}/home/{{ item }}"
       delegate_to: "{{ server_host }}"
       loop: "{{ discipline_users }}"
