@@ -25,10 +25,18 @@ LINK=/etc/systemd/network/10-e1000e-no-tso.link
 cat > "$LINK" <<'EOF'
 # cd108: work around the e1000e "Detected Hardware Unit Hang" under heavy TX.
 # Disable hardware TX segmentation offload so the wedge never triggers.
+#
+# A matching .link file REPLACES 99-default.link for this NIC (udev applies only
+# the first match), so the stock naming policy must be restated here. Without it
+# the NIC keeps its kernel name (eth0) instead of enp0s31f6/eno1, and netplan/NM
+# configs and macvtap VMs bound to the predictable name all break.
 [Match]
 Driver=e1000e
 
 [Link]
+NamePolicy=keep kernel database onboard slot path
+AlternativeNamesPolicy=database onboard slot path
+MACAddressPolicy=persistent
 TCPSegmentationOffload=no
 TCP6SegmentationOffload=no
 GenericSegmentationOffload=no
@@ -36,6 +44,11 @@ GenericReceiveOffload=no
 EOF
 echo "installed $LINK"
 
+# .link files are copied into the initramfs, where NIC naming actually happens —
+# rebuild it now so the next boot doesn't run with a stale copy. (The original
+# version of this file lacked NamePolicy; it lay dormant until a kernel update
+# rebuilt the initramfs, then sigivestserver booted with eth0 and lost its IP.)
+update-initramfs -u
 # Re-apply link setup for matching devices without a reboot.
 udevadm control --reload || true
 for dev in /sys/class/net/*/device/driver; do
