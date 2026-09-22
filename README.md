@@ -14,6 +14,7 @@ Configuration management for ~50 Ubuntu machines across 4 research labs
 | **Automate the imaging** (USB → recovery partition → PXE) | [`docs/imaging-automation.md`](docs/imaging-automation.md) |
 | **Auto-sleep idle machines at night** (spare a room/PC, change the time) | [`docs/autosleep.md`](docs/autosleep.md) |
 | **Fix something that broke** | [`docs/troubleshooting.md`](docs/troubleshooting.md) |
+| **ca307 identity** — create a user, enroll a machine, someone can't log in | [`docs/identity/`](docs/identity/README.md) · manual pt-BR [`docs/manuais/criar-novo-usuario.md`](docs/manuais/criar-novo-usuario.md) |
 
 New here? Read the architecture doc, then follow **Day one** in the runbooks.
 
@@ -56,6 +57,8 @@ roles/sdr/               build SDR++/UHD/LibreSDR once on the server, distribute
 roles/matlab/            local MATLAB; Ansible writes the network.lic
 roles/server/            apt-cacher-ng, NFS "troca" exchange, ZFS golden pool + sharenfs
 roles/freeipa/           join FreeIPA (only ca307)
+identity/                ca307 FreeIPA enrollment playbook + labsc-mkhome (NFS home helper)
+scripts/commission-user.sh  create an IPA user + NFS home (run on the cd108 VM, as yourself)
 ```
 
 ## Item map (original notes → where it lives)

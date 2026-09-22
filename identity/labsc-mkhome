@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+#
+# labsc-mkhome — the ONLY thing the cd108 VM may do as root on sigivestserver: create/size one
+# IPA user's ZFS home. Installed at /usr/local/sbin/labsc-mkhome; reached through a forced-command
+# SSH key (see docs/identity/runbook.md §3), so any IPA admin on the cd108 VM can commission users
+# without holding a personal sudo account on sigivestserver.
+#
+#   ssh svc-mkhome@192.168.122.1 mkhome <user> <uid> <gid> <quota>    # → sudo labsc-mkhome ...
+#
+# Guarantees:
+#   - validates every argument (username regex, uid/gid inside labsc's IPA range, quota format);
+#   - an EXISTING home is never re-chowned (only its quota changes) — a typo'd uid can't hand
+#     someone else's files away;
+#   - /etc/exports (hand-written, not ours) is fingerprinted before/after; abort if it changed.
+set -euo pipefail
+
+BASE="hdmirror/remotehomes"; MP="/export/remotehomes"
+ID_MIN=500600000; ID_MAX=500799999
+
+# forced-command entry: arguments arrive in SSH_ORIGINAL_COMMAND, never through a shell
+if [ -n "${SSH_ORIGINAL_COMMAND:-}" ] && [ $# -eq 0 ]; then
+  read -r -a ARGS <<<"$SSH_ORIGINAL_COMMAND"
+  [ "${ARGS[0]:-}" = mkhome ] || { echo "only 'mkhome <user> <uid> <gid> <quota>' is allowed" >&2; exit 2; }
+  exec sudo -n /usr/local/sbin/labsc-mkhome "${ARGS[@]:1}"
+fi
+
+[ "$(id -u)" = 0 ] || { echo "must run as root (via sudo)" >&2; exit 2; }
+[ $# -eq 4 ] || { echo "usage: labsc-mkhome <user> <uid> <gid> <quota>" >&2; exit 2; }
+U="$1" UIDN="$2" GIDN="$3" Q="$4"
+printf '%s' "$U" | grep -Eq '^[a-z_][a-z0-9_-]{0,31}$'   || { echo "bad user '$U'" >&2; exit 2; }
+for n in "$UIDN" "$GIDN"; do
+  printf '%s' "$n" | grep -Eq '^[0-9]+$' && [ "$n" -ge "$ID_MIN" ] && [ "$n" -le "$ID_MAX" ] \
+    || { echo "id '$n' outside labsc IPA range $ID_MIN-$ID_MAX" >&2; exit 2; }
+done
+printf '%s' "$Q" | grep -Eq '^[0-9]+[MGT]$'               || { echo "bad quota '$Q' (e.g. 10G)" >&2; exit 2; }
+
+MD5_BEFORE="$(md5sum /etc/exports | awk '{print $1}')"
+zfs list -H -o name "$BASE" >/dev/null                    # parent must exist (it carries sharenfs)
+
+if zfs list -H -o name "$BASE/$U" >/dev/null 2>&1; then
+  zfs set refquota="$Q" "$BASE/$U"
+  echo "exists — quota set; owner left as $(stat -c %u:%g "$MP/$U")"
+else
+  zfs create "$BASE/$U"                                   # inherits sharenfs → its own export
+  zfs set refquota="$Q" "$BASE/$U"
+  cp -a /etc/skel/. "$MP/$U/"
+  chown -R "$UIDN:$GIDN" "$MP/$U"; chmod 700 "$MP/$U"
+  echo "created"
+fi
+zfs list -o name,refquota,used "$BASE/$U"
+
+[ "$MD5_BEFORE" = "$(md5sum /etc/exports | awk '{print $1}')" ] \
+  || { echo "/etc/exports CHANGED during provisioning — investigate!" >&2; exit 1; }
+echo "/etc/exports unchanged"

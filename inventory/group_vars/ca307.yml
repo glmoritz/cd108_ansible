@@ -1,7 +1,12 @@
-# Particularities for lab ca307 — the FreeIPA lab.
-# FreeIPA join settings (domain/realm/server) go here once captured from an
-# already-joined machine. The join PASSWORD must live in a vaulted file, never here.
-#
-# freeipa_domain: ca307.utfpr.edu.br
-# freeipa_realm:  CA307.UTFPR.EDU.BR
-# freeipa_server: ipa.ca307.utfpr.edu.br
+# Particularities for lab ca307 (LabSC) — the FreeIPA lab.
+# Identity docs: docs/identity/ (parameters, runbook, login debugging).
+# roles/freeipa is still a stub; identity/enroll-lab-client.yml is the working enrollment for now
+# and carries these same values as its own defaults. The join PASSWORD is prompted / vaulted,
+# never here.
+freeipa_domain: labscipa.tutu.eng.br
+freeipa_realm:  LABSCIPA.TUTU.ENG.BR
+freeipa_server: ipa1.labscipa.tutu.eng.br     # 103.0.1.40, VM on sigivestserver
+freeipa_replica: ipa2.labscipa.tutu.eng.br    # 103.0.1.42, VM on moritzpc (CA + DNS replica)
+freeipa_dns: ["103.0.1.40", "103.0.1.42"]     # split-DNS: only ~labscipa.tutu.eng.br goes here
+freeipa_id_range: [500600000, 500799999]      # LABIC uses 500800000+ — never overlap
+freeipa_nfs_homes: "nfs1.labscipa.tutu.eng.br:/export/remotehomes"   # sigivestserver

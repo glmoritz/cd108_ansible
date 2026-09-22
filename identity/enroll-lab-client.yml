@@ -1,0 +1,308 @@
+---
+# Cleanly enroll an already-running lab machine as a FreeIPA client (realm LABSCIPA — ca307).
+# Encodes every fix learned in the sigivest rehearsal + LABIC production. Moved here from
+# labic-infra/ansible/enroll-lab-client.yml (2026-09-22); docs: docs/identity/runbook.md §1-§2.
+# Standalone for now — NOT part of site.yml (roles/freeipa is still a stub; see the runbook).
+#
+#   # name it + enroll as a student workstation:
+#   ansible-playbook identity/enroll-lab-client.yml -e target=ca307 -e machine_role=public -e pc_name=ca307-01 --limit ca307-01
+#   # professor / personal box (keeps local homes, no automount):
+#   ansible-playbook identity/enroll-lab-client.yml -e target=server -e machine_role=professor -e pc_name=cd108 --limit cd108.tutu.eng.br
+#
+# machine_role:
+#   public    -> student workstation: local /home users are RELOCATED to /var/local, then /home
+#                is autofs-mounted from NFS.
+#   professor -> personal machine: IPA login works, local /home is UNTOUCHED. The lab NFS homes are
+#                mounted read-on-access under {{ prof_homes_mount }} (default /mnt/labhomes/<user>) so
+#                the box can reach lab homes without any risk to the local desktop. Safe for a daily driver.
+#
+# pc_name: the short hostname to give this PC (fixes the "hostname mess"). The machine is set to
+#          <pc_name>.<ipa_domain>. Defaults to the current short hostname if not given.
+
+- name: Enroll lab client into FreeIPA
+  hosts: "{{ target | default('lab_clients') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    ipa_server:   ipa1.labscipa.tutu.eng.br
+    ipa_ip:       "103.0.1.40"
+    ipa_ip2:      "103.0.1.42"          # replica ipa2 — 2nd resolver so ipa1 downtime doesn't blind clients
+    ipa_domain:   labscipa.tutu.eng.br
+    ipa_realm:    LABSCIPA.TUTU.ENG.BR
+    nfs_host:     nfs1.labscipa.tutu.eng.br
+    homes_export: /export/remotehomes
+    machine_role: public                 # public | professor
+    relocate_base: /var/local            # where local /home users get moved on public boxes
+    prof_homes_mount: /mnt/labhomes      # professor boxes: mount lab NFS homes here (NOT /home), local homes untouched
+    apt_proxy: "{{ apt_proxy_url | default('') }}"   # the hub's apt-cacher-ng (group_vars/all.yml); "" disables
+    pc_name: "{{ ansible_hostname }}"     # override with -e pc_name=lab-a-01
+    client_fqdn: "{{ pc_name | lower }}.{{ ipa_domain }}"
+    ansible_remote_tmp: /var/tmp/.ansible-tmp   # outside /home so /home autofs can't break the run
+    ansible_python_interpreter: /usr/bin/python3  # pin the distro python (some boxes have a broken manual python3.13)
+    enable_dyndns: true                  # SSSD self-registers this host's A record (DHCP-safe; see task 4a)
+    lan_iface: "{{ ansible_default_ipv4.interface }}"  # NIC whose IP gets registered; override -e lan_iface=eno1 if default route isn't the campus LAN
+
+  vars_prompt:
+    - name: ipa_admin_password
+      prompt: "FreeIPA admin password"
+      private: true
+
+  tasks:
+    # ---------- 0. Set a proper, consistent hostname (fixes the naming mess) ----------
+    - name: Set hostname to the FQDN
+      hostname:
+        name: "{{ client_fqdn }}"
+
+    - name: Ensure hostname resolves locally in /etc/hosts
+      lineinfile:
+        path: /etc/hosts
+        regexp: '^127\.0\.1\.1\b'
+        line: "127.0.1.1   {{ client_fqdn }} {{ pc_name | lower }}"
+
+    # ---------- 1. Public workstation: relocate local /home users off /home ----------
+    - name: Find local users whose home is under /home (uid >= 1000)
+      shell: "getent passwd | awk -F: '$3>=1000 && $6 ~ /^\\/home\\// {print $1}'"
+      register: home_users
+      changed_when: false
+
+    - name: Ensure relocation base exists
+      file:
+        path: "{{ relocate_base }}"
+        state: directory
+        mode: "0755"
+      when: machine_role == 'public'
+
+    # MOVE the home (same-filesystem rename = instant, zero extra disk) then repoint passwd.
+    # `mv` (not `cp`) — copying doubles disk usage and can fill the disk on large homes.
+    # `usermod -m` refuses on a logged-in user, so we rename directly + edit passwd below.
+    - name: Move each local /home user to {{ relocate_base }}/<user>
+      command: "mv /home/{{ item }} {{ relocate_base }}/{{ item }}"
+      args:
+        creates: "{{ relocate_base }}/{{ item }}"
+        removes: "/home/{{ item }}"
+      loop: "{{ home_users.stdout_lines }}"
+      when: machine_role == 'public'
+
+    - name: Repoint each user's home to {{ relocate_base }}/<user> (direct /etc/passwd edit; usermod refuses on logged-in users)
+      replace:
+        path: /etc/passwd
+        regexp: '^({{ item }}:.*):/home/{{ item }}:([^:]*)$'
+        replace: '\1:{{ relocate_base }}/{{ item }}:\2'
+      loop: "{{ home_users.stdout_lines }}"
+      when: machine_role == 'public'
+      # Old /home/<user> dirs are now shadowed by autofs (harmless) — purge them once verified.
+
+    # ---------- 2. Split-DNS: only the realm goes to FreeIPA ----------
+    - name: Ensure systemd-resolved drop-in dir exists
+      file:
+        path: /etc/systemd/resolved.conf.d
+        state: directory
+        mode: "0755"
+
+    - name: Split-DNS drop-in for systemd-resolved
+      copy:
+        dest: /etc/systemd/resolved.conf.d/ipa-split.conf
+        content: |
+          [Resolve]
+          DNS={{ ipa_ip }} {{ ipa_ip2 }}
+          Domains=~{{ ipa_domain }}
+      notify: restart resolved
+
+    - name: Apply resolver change now
+      meta: flush_handlers
+
+    - name: Verify the realm resolves via FreeIPA
+      command: "resolvectl query {{ ipa_server }}"
+      register: dnscheck
+      changed_when: false
+      failed_when: ipa_ip not in dnscheck.stdout
+
+    # ---------- 3. Install + enroll (NO --mkhomedir) ----------
+    - name: Point apt at the lab apt-cacher-ng proxy (reliable even when campus login is unauth)
+      copy:
+        dest: /etc/apt/apt.conf.d/01-lab-proxy
+        content: "Acquire::http::Proxy \"{{ apt_proxy }}\";\n"
+      when: ansible_os_family == "Debian" and (apt_proxy | length > 0)
+
+    - name: Refresh apt cache (best-effort — tolerate broken 3rd-party repos on messy boxes)
+      shell: apt-get update || true
+      when: ansible_os_family == "Debian"
+      changed_when: false
+
+    # Install, then VERIFY the packages actually landed — tolerates pre-broken packages
+    # (e.g. a busted fwupd) that make dpkg return non-zero even on a successful install.
+    - name: Install client packages (Ubuntu/Debian)
+      shell: |
+        apt-get install -y freeipa-client python3-packaging autofs nfs-common sssd-tools || true
+        dpkg -l freeipa-client autofs nfs-common sssd-tools 2>/dev/null | grep -c '^ii'
+      register: aptinstall
+      changed_when: false
+      # sssd-tools = sss_cache: freeipa-client doesn't pull it, and without it a stale SSSD cache
+      # (e.g. a newly added SSH key) can't be flushed — deleting /var/lib/sss/db does NOT fix it.
+      failed_when: "(aptinstall.stdout_lines[-1] | int) < 4"
+      when: ansible_os_family == "Debian"
+
+    - name: Install client packages (Rocky/RHEL)
+      dnf:
+        name: [ipa-client, autofs, nfs-utils]
+      when: ansible_os_family == "RedHat"
+
+    - name: Is it already enrolled?
+      stat:
+        path: /etc/ipa/default.conf
+      register: ipa_conf
+
+    - name: Enroll into FreeIPA (no mkhomedir; homes come from NFS)
+      command: >
+        ipa-client-install -U
+        --server={{ ipa_server }} --domain={{ ipa_domain }} --realm={{ ipa_realm }}
+        --principal=admin --password={{ ipa_admin_password }}
+        --hostname={{ client_fqdn }}
+        --force-join --no-ntp
+      when: not ipa_conf.stat.exists
+      no_log: true
+
+    # ---------- 4. Post-enroll fixes that make login actually work ----------
+    - name: 'netgroup: drop NIS (a missing NIS server hangs logins)'
+      lineinfile:
+        path: /etc/nsswitch.conf
+        regexp: '^netgroup:'
+        line: 'netgroup:       sss'
+      notify: restart sssd
+
+    # ---------- 4a. DHCP-safe DNS: SSSD self-registers this host's A record ----------
+    # We don't own the campus DHCP (no server-side lease->DNS like pfSense), so use FreeIPA's
+    # CLIENT-side mechanism: SSSD sends a Kerberos-signed (GSS-TSIG) nsupdate for THIS host's
+    # own A record and refreshes it, so the record follows the DHCP-assigned IP.
+    #   - dyndns_iface: pin to the LAN NIC (default = default-route iface) so multi-homed boxes
+    #     (docker/libvirt/wireguard) don't register the wrong IP.
+    #   - dyndns_update_ptr=false: we built with --no-reverse, so there's no PTR zone.
+    - name: Enable SSSD dynamic DNS self-registration (DHCP-safe A record)
+      ini_file:
+        path: /etc/sssd/sssd.conf
+        section: "domain/{{ ipa_domain }}"
+        option: "{{ item.k }}"
+        value: "{{ item.v }}"
+        owner: root
+        group: root
+        mode: "0600"
+        no_extra_spaces: true
+      loop:
+        - { k: dyndns_update,           v: "true" }
+        - { k: dyndns_refresh_interval, v: "43200" }   # re-assert every 12h
+        - { k: dyndns_update_ptr,       v: "false" }
+        - { k: dyndns_iface,            v: "{{ lan_iface }}" }
+      loop_control: { label: "{{ item.k }}" }
+      when: enable_dyndns | bool
+      notify: restart sssd
+
+    # Only on PUBLIC boxes: there /home is the NFS mount and pam_mkhomedir fights root_squash.
+    # On professor boxes /home is local, so leave mkhomedir alone (harmless + useful for a rare IPA login).
+    - name: Disable pam_mkhomedir on public boxes (fights NFS root_squash; homes are pre-provisioned)
+      replace:
+        path: /etc/pam.d/common-session
+        regexp: '^(session\s+.*pam_mkhomedir\.so.*)$'
+        replace: '#\1'
+      when: ansible_os_family == "Debian" and machine_role == 'public'
+
+    # ---------- 4b. HBAC: put public workstations in the public-workstations host group ----------
+    # so your students-on-public HBAC rule applies automatically (needs kinit admin; the client
+    # has the `ipa` CLI). Idempotent: creates the group if missing, ignores "already a member".
+    # Best-effort + time-bounded: on a flaky box the `ipa` CLI can hang; never let that abort
+    # enrollment. If it can't add itself, add the host to public-workstations centrally (ipa1/web UI).
+    - name: Add this host to the public-workstations HBAC host group (best-effort)
+      shell: |
+        timeout 40 bash -c '
+          echo "{{ ipa_admin_password }}" | kinit admin >/dev/null 2>&1 || exit 9
+          ipa hostgroup-add public-workstations --desc="Public student workstations" >/dev/null 2>&1 || true
+          ipa hostgroup-add-member public-workstations --hosts={{ client_fqdn }} 2>&1
+          kdestroy >/dev/null 2>&1
+        '
+      register: hg_add
+      changed_when: "'members added 1' in (hg_add.stdout | default(''))"
+      failed_when: false
+      no_log: true
+      when: machine_role == 'public'
+
+    # ---------- 5. Local-map autofs (bypasses the SSSD automount responder, which hangs) ----------
+    # public    -> map on /home           (homes ARE the desktop home)
+    # professor -> map on {{ prof_homes_mount }} (side mount; local /home stays the real desktop home)
+    - name: 'automount source = files (bypass SSSD automount responder, which hangs)'
+      lineinfile:
+        path: /etc/nsswitch.conf
+        regexp: '^automount:'
+        line: 'automount:      files'
+      when: machine_role in ['public', 'professor']
+      notify: restart autofs
+
+    # --- PUBLIC: /home is the NFS home ---
+    - name: auto.master.d entry for /home (public)
+      copy:
+        dest: /etc/auto.master.d/home.autofs
+        content: "/home /etc/auto.home\n"
+      when: machine_role == 'public'
+      notify: restart autofs
+
+    - name: auto.home wildcard -> NFS home (public)
+      copy:
+        dest: /etc/auto.home
+        content: "* -fstype=nfs4,rw,sec=sys {{ nfs_host }}:{{ homes_export }}/&\n"
+      when: machine_role == 'public'
+      notify: restart autofs
+
+    # --- PROFESSOR: lab homes mounted at {{ prof_homes_mount }}, local /home untouched ---
+    - name: Ensure the professor lab-homes mountpoint exists
+      file:
+        path: "{{ prof_homes_mount }}"
+        state: directory
+        mode: "0755"
+      when: machine_role == 'professor'
+
+    - name: auto.master.d entry for {{ prof_homes_mount }} (professor)
+      copy:
+        dest: /etc/auto.master.d/labhomes.autofs
+        content: "{{ prof_homes_mount }} /etc/auto.labhomes\n"
+      when: machine_role == 'professor'
+      notify: restart autofs
+
+    - name: auto.labhomes wildcard -> NFS home (professor)
+      copy:
+        dest: /etc/auto.labhomes
+        content: "* -fstype=nfs4,rw,sec=sys {{ nfs_host }}:{{ homes_export }}/&\n"
+      when: machine_role == 'professor'
+      notify: restart autofs
+
+    # LABIC lesson (bit 4 times): a local user left in /home silently stops autofs taking /home.
+    - name: Assert no local user still has a home under /home (public)
+      shell: "awk -F: '$3>=1000 && $3<60000 && $6 ~ /^\\/home\\// {print $1}' /etc/passwd"
+      register: leftover_home_users
+      changed_when: false
+      failed_when: leftover_home_users.stdout | length > 0
+      when: machine_role == 'public'
+
+    - name: Enable + start autofs
+      systemd:
+        name: autofs
+        enabled: true
+        state: started
+      when: machine_role in ['public', 'professor']
+
+  handlers:
+    - name: restart resolved
+      systemd: { name: systemd-resolved, state: restarted }
+    - name: restart sssd
+      systemd: { name: sssd, state: restarted }
+    - name: restart autofs
+      systemd: { name: autofs, state: restarted }
+
+  post_tasks:
+    # ipa-client-install drops sshd_config.d/04-ipa.conf with ChallengeResponseAuthentication yes,
+    # which silently re-enables password login. Report the EFFECTIVE setting; the files lie.
+    - name: Effective sshd keyboard-interactive setting (informational)
+      command: sshd -T
+      register: sshd_t
+      changed_when: false
+    - name: Show it
+      debug:
+        msg: "{{ sshd_t.stdout_lines | select('match', '^(kbdinteractiveauthentication|passwordauthentication) ') | list }}"
