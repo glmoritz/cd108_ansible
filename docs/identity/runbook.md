@@ -49,13 +49,21 @@ as a single literal name, adds nothing, and still exits 0 (a LABIC trap).
 ## 1. Enroll the cd108 VM (the admin host) — PENDING
 
 The user script needs the `ipa` CLI and SSSD on the cd108 VM. Not enrolled yet (checked
-2026-09-22). Enroll it **professor-style**: `daelt` lives in `/home/daelt`, and autofs on `/home`
-would hide that account. Professor-style leaves `/home` alone and side-mounts lab homes at
-`/mnt/labhomes`.
+2026-09-22). Enroll it with **`machine_role=admin`**: IPA login + `ipa` CLI, no automount, `/home`
+untouched (`daelt` lives there). Not `professor`: its `/mnt/labhomes` automount points at `nfs1`
+(103.0.1.37), which the VM can't reach (macvtap), so it would only hang.
+
+Use a **one-time host password** instead of handing out an admin password:
 ```bash
-ansible-playbook identity/enroll-lab-client.yml -e target=server \
-  -e machine_role=professor -e pc_name=cd108 --limit cd108.tutu.eng.br
+# an admin, anywhere enrolled (or web UI: Hosts → Add → Generate OTP):
+ipa host-add cd108.labscipa.tutu.eng.br --random --force        # prints the OTP
+# from the control node:
+ansible-playbook identity/enroll-lab-client.yml -e target=server -e machine_role=admin \
+  -e pc_name=cd108 -e ipa_otp='<otp>' -e ipa_admin_password='' --limit cd108.tutu.eng.br
 ```
+(Dry run 2026-09-22 with `--check`: hostname → `cd108.labscipa.tutu.eng.br`, `/etc/hosts`
+127.0.1.1 line, split-DNS drop-in, apt proxy file, `netgroup: nis` → `sss`, sssd dyndns on
+`ens7`; the only failure was check-mode's "autofs service not found", expected before install.)
 Then do §0.2 and install `sssd-tools` there (`sss_cache`).
 
 ⚠️ **Hostname conflict (unresolved):** enrollment sets the FQDN (`cd108.labscipa.tutu.eng.br`), but
@@ -75,11 +83,15 @@ split-DNS, no `--mkhomedir`, `netgroup: sss`, local autofs map, dyndns, adding t
 ansible-playbook identity/enroll-lab-client.yml -e target=ca307 \
   -e machine_role=public -e pc_name=ca307-NN --limit ca307-NN
 ```
-**Before running on an imaged ca307 box**, decide what happens to the golden's course accounts
-(`estudante`, `redes`, `microcontroladores`, `daelt`, all under `/home` on ZFS). `public` **moves
-them to `/var/local/<u>`**, and that conflicts with the `zfs`/`common` roles, which expect
-them in `/home`. This is why `site.yml`'s `freeipa` role is still a stub. See README
-§"Open design question".
+**Before running on an imaged ca307 box**, move the golden's course accounts (`estudante`,
+`redes`, `microcontroladores`, `daelt`, all under `/home` on ZFS) out of `/home` — decided
+2026-09-22: **local accounts go elsewhere, the NFS mount owns `/home`**. Tool:
+`identity/relocate-local-homes.sh NEW_BASE <home-dataset>` (e.g. `/var/local/home ssdpool/home`),
+which moves ZFS homes by **mountpoint** (instant, no copy). Its playbook wrapper and the
+`local_home_base` var for `roles/zfs`/`roles/common` are TODO (README §TODO item 3).
+⚠️ The enroll playbook's own `public` relocation does a plain `mv /home/<u> /var/local/<u>`:
+on a ZFS-backed home that **copies** the data and leaves the dataset mounted underneath
+(what happened on labsc06). Relocate first, so that step finds nothing to do.
 
 **Verify on the client, never from the server:**
 ```bash

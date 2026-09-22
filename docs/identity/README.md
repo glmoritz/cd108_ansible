@@ -62,17 +62,59 @@ Credentials are offline (KeePass). Never commit them.
   Enrolled so far (outside this inventory): `pubws1`, labsc06, labsc11, labsc17.
 - **sigivestserver lost its IP on 2026-09** after a kernel update: `scripts/fix-e1000e-hang.sh`'s
   `.link` file replaced the default NIC-naming policy, so the NIC came up as `eth0`. Fixed on the
-  host (now `enp0s31f6` again); the script fix is in the working tree of this repo.
+  host (now `enp0s31f6` again) and in `scripts/fix-e1000e-hang.sh` (restates `NamePolicy`,
+  rebuilds the initramfs).
 
-## Open design question — ca307 homes vs the golden's local accounts
+## TODO — on site (next visit to ca307)
 
-The golden image has local course accounts (`estudante`, `redes`, `microcontroladores`) with homes
-on `ssdpool/home` **under `/home`**, and `daelt` at `/home/daelt`. An IPA "public" workstation
-mounts `/home` from NFS via autofs — **a local user living in `/home` silently blocks that**
-(LABIC hit it four times: autofs reports active, only `mount | grep ' /home '` shows it never took
-over). Before `roles/freeipa` is written, decide per ca307 machine:
+In order. Each item says what's already prepared in the repo.
 
-- **public** — IPA users own `/home`; local accounts move out (e.g. `/var/local/<u>`), or
-- **professor-style** — local `/home` untouched, lab homes side-mounted at `/mnt/labhomes`.
+1. **Yago's login loop** — `yribeiro` types the password at the Ubuntu login, the session starts
+   and drops back to the greeter; GDM does show his full name, so NSS/SSSD↔IPA works.
+   Ruled out remotely on 2026-09-22 (on labsc06, same realm): account resolves (uid 500600009,
+   group `students`), **HBAC allows** him for `gdm-password` and `sshd` (`sssctl user-checks`),
+   his NFS home mounts (20G) and is **writable as him**. But the home has never held a session
+   (no `.cache`/`.config`) and labsc06's logs show no attempt by him — **the failing PC is a
+   different one**. NFS server logs point at `103.0.2.12` (no SSH answer) or `103.0.2.14` (host
+   key changed — probably reflashed; none of our keys log in).
+   **Top suspect:** on that PC autofs never took `/home` (a local user in `/home`, or it wasn't
+   enrolled as `public`) → `/home/yribeiro` missing → GDM aborts the session. On that PC:
+   ```
+   mount | grep ' /home '; ls -ld /home/yribeiro; getent passwd yribeiro
+   sudo journalctl -b | grep -iE 'yribeiro|gdm|pam_sss' | tail -40
+   ```
+   then walk [`login-debugging.md`](login-debugging.md) §0. Also add our deploy key to that PC.
+2. **Enroll the cd108 VM** — dry run clean (2026-09-22). Get a one-time host password
+   (IPA web UI: Hosts → Add `cd108.labscipa.tutu.eng.br` → Generate OTP, or
+   `ipa host-add cd108.labscipa.tutu.eng.br --random --force`), then runbook §1.
+   Then: HBAC for admins on the admin host (runbook §0.2) and the `labsc-mkhome` key (§3).
+3. **Relocate local homes on ca307 PCs** (golden course accounts out of `/home`, NFS gets `/home`).
+   Prepared: `identity/relocate-local-homes.sh` (moves ZFS homes by mountpoint, dataset passed
+   explicitly, refuses on non-ca307 hostnames). **Untested.** Still to write:
+   `identity/relocate-local-homes.yml` (runs the script as a detached systemd unit so the Ansible
+   session's cwd doesn't pin the home; reconnects to verify), and a `local_home_base` var
+   (`/home` default, `/var/local/home` for ca307) used by `roles/zfs` + `roles/common`, which
+   today hard-code `/home` and would move the homes back on the next converge.
+   Test on ONE ca307 PC (or a disposable VM with its own disk) — **never on moritzpc**, whose
+   `ssdpool/home` is the live `/home`.
+4. **labsc06 cleanup** — the old enroll playbook `mv`'d `labsc`'s home to `/var/local/labsc`
+   (ext4 copy) while ZFS `homepool/home/labsc` stays mounted, hidden, at `/home/labsc`. Two
+   copies; decide which is current before touching either. (Installed `sssd-tools` there
+   2026-09-22 for `sssctl`.)
+5. **Decide the hostname rule** for enrolled hosts (`common` sets the short name, IPA sets the
+   FQDN — runbook §1), then write `roles/freeipa` from `identity/enroll-lab-client.yml` and add
+   the ca307 hosts to `inventory/hosts.yml`.
+6. **ipa2 host key changed** (seen from moritzpc 2026-09-22) — confirm it was a rebuild, not
+   something else, before trusting it.
 
-`identity/enroll-lab-client.yml` implements both (`machine_role=public|professor`).
+## Decided 2026-09-22 — ca307 homes vs the golden's local accounts
+
+The golden image has local course accounts (`estudante`, `redes`, `microcontroladores`, `daelt`)
+with homes on `ssdpool/home` **under `/home`**. A local user living in `/home` silently blocks
+autofs from serving `/home` from NFS (LABIC hit it four times: autofs reports active, only
+`mount | grep ' /home '` shows it never took over).
+
+**Decision:** on ca307, **the NFS mount owns `/home`; local accounts move elsewhere**
+(`/var/local/home/<u>`), done by a separate playbook before enrollment (TODO item 3).
+`identity/enroll-lab-client.yml` roles: `public` (ca307 PCs), `admin` (the cd108 VM),
+`professor` (a personal box that keeps its local `/home`).

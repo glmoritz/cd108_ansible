@@ -17,6 +17,7 @@ H=$(hostname -f)                           # must end in .labscipa.tutu.eng.br
 | `Permission denied` immediately, password surely right | HBAC or wrong password/expired | §4, §5 |
 | Login **hangs** 30–90 s, then fails or succeeds | DNS, NIS netgroup, SSSD automount | §1, §3 |
 | Logs in but lands in `/` or "Could not chdir to home directory" | autofs / NFS home | §6 |
+| **Graphical login: password accepted, screen goes dark, back to the greeter** (full name shown) | session start — almost always the home: missing, not NFS, not writable | §4 quick check, then §6 |
 | Key login refused, password login works | stale SSSD cache / sshd | §7 |
 | Worked yesterday, fails today everywhere | IPA server down, clock skew, account locked | §2, §5 |
 | Works on one machine, not another | that machine: enrollment, host group, local /home users | §4, §6 |
@@ -62,6 +63,17 @@ grep -E '^(passwd|group|netgroup|automount):' /etc/nsswitch.conf
   local map). Then `sudo systemctl restart autofs`.
 
 ## 4. HBAC — is the user allowed on this host?
+
+Fastest, **on the client, no password needed** (needs `sssd-tools`; through the hub's apt
+cache if the captive portal blocks apt: `apt-get -o Acquire::http::Proxy=http://103.0.1.43:3142 install sssd-tools`):
+```bash
+sudo sssctl user-checks $U -a acct -s gdm-password   # graphical login
+sudo sssctl user-checks $U -a acct -s sshd           # → "pam_acct_mgmt: Success" = HBAC allows
+sudo -u $U bash -c 'cd ~ && touch .probe && rm .probe && df -h ~'   # home mounts + writable as the user
+```
+If both pass on this machine but the user still can't log in on the graphical login, the fault is in
+session start (home, §6) — see the `yribeiro` case in `README.md` §TODO.
+
 
 On the cd108 VM (or any enrolled box), with your own ticket:
 ```bash

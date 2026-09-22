@@ -12,9 +12,17 @@
 # machine_role:
 #   public    -> student workstation: local /home users are RELOCATED to /var/local, then /home
 #                is autofs-mounted from NFS.
+#   admin     -> admin host (the cd108 VM): IPA login + ipa CLI only — no automount, no /home changes.
+#                (The VM can't reach nfs1 anyway: macvtap blocks it from its own host.)
 #   professor -> personal machine: IPA login works, local /home is UNTOUCHED. The lab NFS homes are
 #                mounted read-on-access under {{ prof_homes_mount }} (default /mnt/labhomes/<user>) so
 #                the box can reach lab homes without any risk to the local desktop. Safe for a daily driver.
+#
+# Credentials — either:
+#   * the prompt below: an IPA admin password (yours — not the shared `admin`: -e ipa_principal=<you>), or
+#   * a ONE-TIME host password, so nobody hands out an admin password: an admin runs
+#       ipa host-add <pc>.labscipa.tutu.eng.br --random --force     (or web UI: Hosts → Add → "Generate OTP")
+#     then: -e ipa_otp='<otp>' -e ipa_admin_password=''     (hostgroup add is then done by hand)
 #
 # pc_name: the short hostname to give this PC (fixes the "hostname mess"). The machine is set to
 #          <pc_name>.<ipa_domain>. Defaults to the current short hostname if not given.
@@ -32,7 +40,7 @@
     ipa_realm:    LABSCIPA.TUTU.ENG.BR
     nfs_host:     nfs1.labscipa.tutu.eng.br
     homes_export: /export/remotehomes
-    machine_role: public                 # public | professor
+    machine_role: public                 # public | professor | admin
     relocate_base: /var/local            # where local /home users get moved on public boxes
     prof_homes_mount: /mnt/labhomes      # professor boxes: mount lab NFS homes here (NOT /home), local homes untouched
     apt_proxy: "{{ apt_proxy_url | default('') }}"   # the hub's apt-cacher-ng (group_vars/all.yml); "" disables
@@ -40,6 +48,8 @@
     client_fqdn: "{{ pc_name | lower }}.{{ ipa_domain }}"
     ansible_remote_tmp: /var/tmp/.ansible-tmp   # outside /home so /home autofs can't break the run
     ansible_python_interpreter: /usr/bin/python3  # pin the distro python (some boxes have a broken manual python3.13)
+    ipa_principal: admin                 # override with your own admin login
+    ipa_otp: ""                          # one-time host enrollment password (see header)
     enable_dyndns: true                  # SSSD self-registers this host's A record (DHCP-safe; see task 4a)
     lan_iface: "{{ ansible_default_ipv4.interface }}"  # NIC whose IP gets registered; override -e lan_iface=eno1 if default route isn't the campus LAN
 
@@ -157,7 +167,8 @@
       command: >
         ipa-client-install -U
         --server={{ ipa_server }} --domain={{ ipa_domain }} --realm={{ ipa_realm }}
-        --principal=admin --password={{ ipa_admin_password }}
+        {{ ('--password=' ~ ipa_otp) if (ipa_otp | length > 0)
+           else ('--principal=' ~ ipa_principal ~ ' --password=' ~ ipa_admin_password) }}
         --hostname={{ client_fqdn }}
         --force-join --no-ntp
       when: not ipa_conf.stat.exists
@@ -214,7 +225,7 @@
     - name: Add this host to the public-workstations HBAC host group (best-effort)
       shell: |
         timeout 40 bash -c '
-          echo "{{ ipa_admin_password }}" | kinit admin >/dev/null 2>&1 || exit 9
+          echo "{{ ipa_admin_password }}" | kinit {{ ipa_principal }} >/dev/null 2>&1 || exit 9
           ipa hostgroup-add public-workstations --desc="Public student workstations" >/dev/null 2>&1 || true
           ipa hostgroup-add-member public-workstations --hosts={{ client_fqdn }} 2>&1
           kdestroy >/dev/null 2>&1
@@ -223,7 +234,7 @@
       changed_when: "'members added 1' in (hg_add.stdout | default(''))"
       failed_when: false
       no_log: true
-      when: machine_role == 'public'
+      when: machine_role == 'public' and (ipa_admin_password | length > 0)
 
     # ---------- 5. Local-map autofs (bypasses the SSSD automount responder, which hangs) ----------
     # public    -> map on /home           (homes ARE the desktop home)

@@ -168,6 +168,10 @@ that host; a disk that *never* completes may be genuinely failing (check
 
 ## Still open (not covered by `fleet`)
 
+- **ca307 (LabSC) identity — on-site TODO list** lives in
+  [`docs/identity/README.md`](docs/identity/README.md) §TODO: yribeiro's login loop,
+  enrolling the cd108 VM, moving local homes out of `/home` on ca307 PCs.
+
 - **Auto-sleep is not armed.** No machine currently has `autosleep.timer`
   installed, so nothing suspends on its own. If you want nightly suspend + WoL
   to save power, that feature still needs to be enabled (it's vault-gated) — and
