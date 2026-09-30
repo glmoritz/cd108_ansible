@@ -84,10 +84,8 @@ In order. Each item says what's already prepared in the repo.
    sudo journalctl -b | grep -iE 'yribeiro|gdm|pam_sss' | tail -40
    ```
    then walk [`login-debugging.md`](login-debugging.md) §0. Also add our deploy key to that PC.
-2. **Enroll the cd108 VM** — dry run clean (2026-09-22). Get a one-time host password
-   (IPA web UI: Hosts → Add `cd108.labscipa.tutu.eng.br` → Generate OTP, or
-   `ipa host-add cd108.labscipa.tutu.eng.br --random --force`), then runbook §1.
-   Then: HBAC for admins on the admin host (runbook §0.2) and the `labsc-mkhome` key (§3).
+2. ~~**Enroll the cd108 VM**~~ — **done 2026-09-30**, plus the `labsc-mkhome` key (runbook §3).
+   Admins `glmoritz`, `gsperon` (`admins,sysadmins`) create users with `commission-user` there.
 3. **Drop the old golden datasets on ALREADY-imaged ca307 PCs** (one-time). Since 2026-09-30
    ca307 gets nothing golden (see below), so `roles/zfs` never mounts `ssdpool/home` or
    `ssdpool/windows` there again. PCs imaged before that still carry both, and `ssdpool/home` sits

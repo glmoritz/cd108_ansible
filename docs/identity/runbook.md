@@ -23,7 +23,8 @@ The cd108 VM holds one forced-command key that can only run `labsc-mkhome` there
 ### 0.1 Create an admin (once per person, by an existing admin)
 ```bash
 kinit <you>
-scripts/commission-user.sh --user <login> --first <F> --last <L> --groups admins --quota 20G
+commission-user --user <login> --first <F> --last <L> --groups admins,sysadmins --quota 20G
+sudo mkhomedir_helper <login> 0077        # as daelt on the VM: admin role = no auto home there
 ipa group-show admins                     # read it back — ipa exits 0 even when it did nothing
 ```
 
@@ -46,7 +47,7 @@ as a single literal name, adds nothing, and still exits 0 (a LABIC trap).
 
 ---
 
-## 1. Enroll the cd108 VM (the admin host) — PENDING
+## 1. Enroll the cd108 VM (the admin host) — DONE 2026-09-30
 
 The user script needs the `ipa` CLI and SSSD on the cd108 VM. Not enrolled yet (checked
 2026-09-22). Enroll it with **`machine_role=admin`**: IPA login + `ipa` CLI, no automount, `/home`
@@ -108,7 +109,12 @@ best-effort and **can silently fail**. If it's missing, add it by hand.
 
 ---
 
-## 3. One-time: the `labsc-mkhome` path (admins create homes without sudo on sigivestserver)
+## 3. One-time: the `labsc-mkhome` path (admins create homes without sudo on sigivestserver) — DONE 2026-09-30
+
+Installed and tested. The script is also installed on the VM as `/usr/local/bin/commission-user`
+(copy of `scripts/commission-user.sh`; re-`install` it after changing the script). This path was
+chosen over enrolling sigivestserver in IPA: `sysadmins-sudo` is all-hosts/all-commands, so that
+would hand every sysadmin root on the IPA/NFS host just to create homes.
 
 Needs someone with sudo on sigivestserver **once**:
 ```bash
@@ -147,8 +153,8 @@ Until this exists, `commission-user.sh` falls back to your own sudo account on s
 On the cd108 VM, as yourself:
 ```bash
 kinit <you>
-scripts/commission-user.sh                         # interactive
-scripts/commission-user.sh --user jsilva --first João --last Silva \
+commission-user                                    # interactive
+commission-user --user jsilva --first João --last Silva \
   --groups students --quota 10G --ra 1234567 --email jsilva@alunos.utfpr.edu.br --yes
 ```
 What it does: checks this host is in `LABSCIPA`, creates the user with a **random temp password**

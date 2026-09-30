@@ -22,7 +22,9 @@ A VM cd108 é o host administrativo do LabSC, equivalente ao `ops` do LABIC.
 ## 1. Pré-requisitos
 
 - Sua conta no FreeIPA do LabSC, membro do grupo `admins`. Quem cria ela para você é outro
-  admin, com o mesmo script e `--groups admins`.
+  admin, com o mesmo script e `--groups admins,sysadmins` (`admins` = gerenciar o IPA,
+  `sysadmins` = login + sudo nas máquinas). Depois, uma vez, como `daelt` na VM:
+  `sudo mkhomedir_helper <login> 0077` (a VM não cria home sozinha).
 - Estar na rede do campus (`103.0.0.0/19`) ou na VPN.
 
 ## 2. Entrar na VM cd108 e tirar o ticket
@@ -35,15 +37,17 @@ klist          # "Default principal: <seu-usuario>@LABSCIPA.TUTU.ENG.BR"
 
 ## 3. Rodar o script
 
+O script está instalado na VM como o comando `commission-user` (cópia de
+`scripts/commission-user.sh` em `/usr/local/bin`):
+
 ```sh
-cd ~/cd108_ansible        # ou onde estiver o clone do repositório na VM
-./scripts/commission-user.sh
+commission-user
 ```
 
 Ou com tudo na linha de comando:
 
 ```sh
-./scripts/commission-user.sh \
+commission-user \
   --user jsilva --first João --last Silva \
   --groups students --quota 10G \
   --ra 1234567 --email jsilva@alunos.utfpr.edu.br
