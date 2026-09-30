@@ -193,10 +193,14 @@
         name: "{{ tex_packages + embedded_packages + virt_packages }}"
         state: present
 
+    # Homes land on the received ZFS datasets at /home — except where local_home_base
+    # points elsewhere (ca307: fresh /etc/skel homes under /var/local/home, since autofs
+    # owns /home). create_home also (re)creates a home that's missing after a move.
     - name: Create one user per discipline (homes land on the ZFS datasets)
       user:
         name: "{{ item }}"
         shell: /bin/bash
+        home: "{{ local_home_base | default('/home') }}/{{ item }}"
         create_home: true
       loop: "{{ discipline_users }}"
 
@@ -340,9 +344,18 @@
 
 # --- hostname (declarative, replaces the golden's set-hostname-from-mac.sh) -
 # Name the host in inventory and Ansible applies it — no boot-time MAC script.
+# EXCEPT on FreeIPA-enrolled hosts (the server VM, ca307): identity/enroll-lab-client.yml
+# names them <pc>.labscipa.tutu.eng.br, and resetting that to the short name here made
+# the hostname flip on every converge. The enrolled FQDN wins.
+- name: Is this host enrolled in FreeIPA?
+  ansible.builtin.stat:
+    path: /etc/ipa/default.conf
+  register: ipa_enrolled
+
 - name: Set the hostname from inventory
   ansible.builtin.hostname:
     name: "{{ inventory_hostname_short }}"
+  when: not ipa_enrolled.stat.exists
 
 # The real reverter is the golden's set-hostname.service (purged above). This is
 # just belt-and-suspenders in case cloud-init is ever re-enabled — it's disabled

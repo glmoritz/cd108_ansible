@@ -121,6 +121,15 @@ discipline_users:
   - redes
   - estudante
 
+# Receive the golden course homes (above) into ssdpool/home at /home. Rooms whose
+# users are FreeIPA accounts with fresh NFS homes (ca307) turn this off.
+zfs_receive_homes: true
+# Where the course accounts' homes live. /home everywhere the golden homes are
+# received; ca307 moves them out because autofs owns /home there (NFS homes).
+local_home_base: /home
+# Receive the Windows emergency VM + wire it up (roles/zfs windows.yml + winvm).
+lab_windows_vm: true
+
 # Docker without sudo: on the golden ALL course accounts + daelt are in `docker`.
 docker_users:
   - daelt

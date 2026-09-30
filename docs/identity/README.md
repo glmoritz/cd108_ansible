@@ -88,22 +88,22 @@ In order. Each item says what's already prepared in the repo.
    (IPA web UI: Hosts → Add `cd108.labscipa.tutu.eng.br` → Generate OTP, or
    `ipa host-add cd108.labscipa.tutu.eng.br --random --force`), then runbook §1.
    Then: HBAC for admins on the admin host (runbook §0.2) and the `labsc-mkhome` key (§3).
-3. **Relocate local homes on ca307 PCs** (golden course accounts out of `/home`, NFS gets `/home`).
-   Prepared: `identity/relocate-local-homes.sh` (moves ZFS homes by mountpoint, dataset passed
-   explicitly, refuses on non-ca307 hostnames). **Untested.** Still to write:
-   `identity/relocate-local-homes.yml` (runs the script as a detached systemd unit so the Ansible
-   session's cwd doesn't pin the home; reconnects to verify), and a `local_home_base` var
-   (`/home` default, `/var/local/home` for ca307) used by `roles/zfs` + `roles/common`, which
-   today hard-code `/home` and would move the homes back on the next converge.
-   Test on ONE ca307 PC (or a disposable VM with its own disk) — **never on moritzpc**, whose
+3. **Drop the old golden datasets on ALREADY-imaged ca307 PCs** (one-time). Since 2026-09-30
+   ca307 gets nothing golden (see below), so `roles/zfs` never mounts `ssdpool/home` or
+   `ssdpool/windows` there again. PCs imaged before that still carry both, and `ssdpool/home` sits
+   at `/home`, blocking autofs. Nothing in them is wanted (the course accounts get fresh homes), so
+   from the PC's console — NOT an ssh session as `daelt`, whose cwd would pin the home — run
+   `zfs destroy -r ssdpool/home; zfs destroy -r ssdpool/windows`, then converge (`common`
+   recreates the course homes under `/var/local/home`) and enroll. `daelt` stays reachable through
+   the image-owned `/etc/ssh/authorized_keys.d/daelt`. **Never on moritzpc**, whose
    `ssdpool/home` is the live `/home`.
 4. **labsc06 cleanup** — the old enroll playbook `mv`'d `labsc`'s home to `/var/local/labsc`
    (ext4 copy) while ZFS `homepool/home/labsc` stays mounted, hidden, at `/home/labsc`. Two
    copies; decide which is current before touching either. (Installed `sssd-tools` there
    2026-09-22 for `sssctl`.)
-5. **Decide the hostname rule** for enrolled hosts (`common` sets the short name, IPA sets the
-   FQDN — runbook §1), then write `roles/freeipa` from `identity/enroll-lab-client.yml` and add
-   the ca307 hosts to `inventory/hosts.yml`.
+5. **Write `roles/freeipa`** from `identity/enroll-lab-client.yml` and add the ca307 hosts to
+   `inventory/hosts.yml`. (Hostname rule decided 2026-09-30: enrolled hosts keep the IPA FQDN;
+   `roles/common` skips its hostname task when `/etc/ipa/default.conf` exists.)
 6. **ipa2 host key changed** (seen from moritzpc 2026-09-22) — confirm it was a rebuild, not
    something else, before trusting it.
 
@@ -118,3 +118,15 @@ autofs from serving `/home` from NFS (LABIC hit it four times: autofs reports ac
 (`/var/local/home/<u>`), done by a separate playbook before enrollment (TODO item 3).
 `identity/enroll-lab-client.yml` roles: `public` (ca307 PCs), `admin` (the cd108 VM),
 `professor` (a personal box that keeps its local `/home`).
+
+## Decided 2026-09-30 — ca307 students start from a fresh home
+
+Nothing golden is copied to ca307. Students log in with their own IPA account and get a fresh
+NFS home (`/etc/skel`, created by `scripts/commission-user.sh`). `inventory/group_vars/ca307.yml`:
+- `zfs_receive_homes: false` — `roles/zfs` never creates/mounts `ssdpool/home` (autofs owns
+  `/home`); `reset-homes.yml` skips ca307; `sanoid_datasets: []`.
+- `local_home_base: /var/local/home` — the three course accounts still exist, with **fresh**
+  `/etc/skel` homes there (`roles/common`); the enroll playbook relocates local `/home` users to
+  the same base.
+- `lab_windows_vm: false` — no Windows emergency VM (zfs receive + `winvm` role skipped). Heavy tools that ride the golden home on cd108 (STM32CubeIDE,
+CubeMX, VS Code extensions) are therefore **not** on ca307 unless installed another way.

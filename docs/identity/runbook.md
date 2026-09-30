@@ -66,11 +66,17 @@ ansible-playbook identity/enroll-lab-client.yml -e target=server -e machine_role
 `ens7`; the only failure was check-mode's "autofs service not found", expected before install.)
 Then do §0.2 and install `sssd-tools` there (`sss_cache`).
 
-⚠️ **Hostname conflict (unresolved):** enrollment sets the FQDN (`cd108.labscipa.tutu.eng.br`), but
-`roles/common` sets `inventory_hostname_short` (`cd108`) on every converge. SSSD keeps working
-because `sssd.conf` pins `ipa_hostname`, but the two will flip the hostname back and forth.
-`roles/freeipa` must pick one (proposal: `common` skips the hostname task on `freeipa_members`
-and on enrolled servers).
+**Done 2026-09-30.** Two things found on the way, both now handled in the repo:
+- **sudo-rs:** Ubuntu 26.04's default `/usr/bin/sudo` is sudo-rs, which ignores SSSD, so
+  `sysadmins-sudo` didn't apply ("I'm sorry glmoritz. I'm afraid I can't do that"). The enroll
+  playbook now switches 25.10+ hosts to classic sudo (`update-alternatives --set sudo
+  /usr/bin/sudo.ws`). Undo: `update-alternatives --auto sudo`.
+- **Hostname:** enrollment sets the FQDN; `roles/common` now leaves the hostname alone on any
+  host with `/etc/ipa/default.conf`, so converges no longer flip it back to `cd108`.
+- The enrolled VM has no home for IPA admins (role `admin` = no mkhomedir/automount): create one
+  per admin once, as `daelt`: `sudo mkhomedir_helper <login> 0077`.
+- `sysadmins-everywhere` (HBAC) + `sysadmins-sudo` already cover login + sudo here, so §0.2's
+  `admins-on-admin-hosts` rule is only needed for an admin who is NOT in `sysadmins`.
 
 ---
 
@@ -83,12 +89,10 @@ split-DNS, no `--mkhomedir`, `netgroup: sss`, local autofs map, dyndns, adding t
 ansible-playbook identity/enroll-lab-client.yml -e target=ca307 \
   -e machine_role=public -e pc_name=ca307-NN --limit ca307-NN
 ```
-**Before running on an imaged ca307 box**, move the golden's course accounts (`estudante`,
-`redes`, `microcontroladores`, `daelt`, all under `/home` on ZFS) out of `/home` — decided
-2026-09-22: **local accounts go elsewhere, the NFS mount owns `/home`**. Tool:
-`identity/relocate-local-homes.sh NEW_BASE <home-dataset>` (e.g. `/var/local/home ssdpool/home`),
-which moves ZFS homes by **mountpoint** (instant, no copy). Its playbook wrapper and the
-`local_home_base` var for `roles/zfs`/`roles/common` are TODO (README §TODO item 3).
+ca307 gets **nothing golden** (decided 2026-09-30): no golden homes, no Windows VM; the course
+accounts get fresh homes under `/var/local/home` (README §"Decided 2026-09-30"). A PC imaged
+**before** that still has `ssdpool/home` mounted at `/home` (plus `ssdpool/windows`): **before
+running on it**, destroy both from the console — README §TODO item 3.
 ⚠️ The enroll playbook's own `public` relocation does a plain `mv /home/<u> /var/local/<u>`:
 on a ZFS-backed home that **copies** the data and leaves the dataset mounted underneath
 (what happened on labsc06). Relocate first, so that step finds nothing to do.

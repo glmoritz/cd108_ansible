@@ -15,7 +15,7 @@
     - { role: common,  tags: common }
     - { role: desktop, tags: desktop }
     - { role: zfs,     tags: zfs }      # build pool + receive homes/windows from server
-    - { role: winvm,   tags: winvm }    # Windows VM: revert wiring + launcher (needs ssdpool/windows)
+    - { role: winvm,   tags: winvm, when: "lab_windows_vm | default(true) | bool" }  # Windows VM: revert wiring + launcher (needs ssdpool/windows)
     - { role: sdr,     tags: sdr }
     - { role: matlab,  tags: matlab }
     - { role: freeipa, tags: freeipa, when: "inventory_hostname in groups['freeipa_members']" }

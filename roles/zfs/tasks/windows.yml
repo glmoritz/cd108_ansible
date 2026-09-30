@@ -1,0 +1,53 @@
+---
+# The emergency Windows VM received from the server golden. Included from main.yml
+# only when lab_windows_vm is true (every room except ca307).
+
+- name: Is the Windows emergency VM already received?
+  command: "zfs list -H -o name {{ zfs_pool }}/windows"
+  register: win_present
+  failed_when: false
+  changed_when: false
+
+# -R (replication stream) so ALL the windows snapshots ride along — critically
+# @{{ winvm_revert_snapshot | default('ltspice') }}, the clean baseline the winvm
+# role reverts to. A plain send of @golden would ship only that one snapshot and
+# the revert wiring would fail ("clean-baseline snapshot does not exist").
+- name: Initial receive of the Windows emergency VM (with its snapshots)
+  shell: >-
+    zfs send -R {{ zfs_pool_server }}/golden/windows@{{ golden_snapshot }}
+    | mbuffer -q
+    | ssh -i {{ deploy_key_on_server }} -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{ admin_user }}@{{ ansible_host | default(inventory_hostname) }} "zfs recv -u -F {{ zfs_pool }}/windows"
+  delegate_to: "{{ server_host }}"
+  when: win_present.rc != 0
+
+# The `-R` receive carries the golden's EXPLICIT mountpoint (…/golden/windows),
+# so ssdpool/windows lands at /mnt/ssdpool/golden/windows — but the libvirt
+# domain + winvm_disk_path expect the qcow2 at {{ winvm_disk_path }}. Homes get
+# this same golden-mountpoint reset above; the Windows dataset was missed, so the
+# VM failed to start ("Cannot access storage file …/ssdpool/windows/windows.qcow2:
+# No such file"). Pin it to the canonical mountpoint (only when wrong — a
+# `zfs set mountpoint` forces an unmount+remount that errors "busy" if the VM
+# disk is open, matching the guard pattern used for the homes).
+- name: Does the Windows dataset exist now (received or pre-existing)?
+  command: "zfs list -H -o name {{ zfs_pool }}/windows"
+  register: win_now
+  failed_when: false
+  changed_when: false
+
+- name: Pin the Windows dataset to its canonical mountpoint + mount it
+  when: win_now.rc == 0
+  block:
+    - name: Read the Windows dataset's current mountpoint
+      command: "zfs get -H -o value mountpoint {{ zfs_pool }}/windows"
+      register: win_mp
+      changed_when: false
+
+    - name: Point ssdpool/windows at {{ winvm_disk_path | dirname }} (only if wrong)
+      command: "zfs set mountpoint={{ winvm_disk_path | dirname }} {{ zfs_pool }}/windows"
+      when: win_mp.stdout | trim != (winvm_disk_path | dirname)
+
+    - name: Ensure the Windows dataset is mounted
+      command: "zfs mount {{ zfs_pool }}/windows"
+      register: win_mount
+      changed_when: win_mount.rc == 0
+      failed_when: win_mount.rc != 0 and 'already mounted' not in win_mount.stderr

@@ -10,3 +10,17 @@ freeipa_replica: ipa2.labscipa.tutu.eng.br    # 103.0.1.42, VM on moritzpc (CA +
 freeipa_dns: ["103.0.1.40", "103.0.1.42"]     # split-DNS: only ~labscipa.tutu.eng.br goes here
 freeipa_id_range: [500600000, 500799999]      # LABIC uses 500800000+ — never overlap
 freeipa_nfs_homes: "nfs1.labscipa.tutu.eng.br:/export/remotehomes"   # sigivestserver
+
+# Students log in with their own FreeIPA account and start from a FRESH NFS home
+# (/etc/skel, made by scripts/commission-user.sh). Nothing golden is copied here
+# (decided 2026-09-30):
+#   * no golden course homes — roles/zfs never creates/mounts ssdpool/home (autofs
+#     owns /home); reset-homes.yml skips ca307;
+#   * the course accounts (discipline_users) still exist but get FRESH local homes
+#     (/etc/skel) under local_home_base, outside /home — the same base the enroll
+#     playbook relocates local /home users to;
+#   * no Windows emergency VM — roles/zfs skips its receive and site.yml skips winvm.
+zfs_receive_homes: false
+local_home_base: /var/local/home
+lab_windows_vm: false
+sanoid_datasets: []          # no ssdpool/home to snapshot here

@@ -41,7 +41,7 @@
     nfs_host:     nfs1.labscipa.tutu.eng.br
     homes_export: /export/remotehomes
     machine_role: public                 # public | professor | admin
-    relocate_base: /var/local            # where local /home users get moved on public boxes
+    relocate_base: "{{ local_home_base | default('/var/local') }}"   # where local /home users get moved on public boxes (ca307: /var/local/home, group_vars)
     prof_homes_mount: /mnt/labhomes      # professor boxes: mount lab NFS homes here (NOT /home), local homes untouched
     apt_proxy: "{{ apt_proxy_url | default('') }}"   # the hub's apt-cacher-ng (group_vars/all.yml); "" disables
     pc_name: "{{ ansible_hostname }}"     # override with -e pc_name=lab-a-01
@@ -175,6 +175,26 @@
       no_log: true
 
     # ---------- 4. Post-enroll fixes that make login actually work ----------
+    # Ubuntu 25.10+ points /usr/bin/sudo at sudo-rs, which ignores `sudoers: sss` — IPA sudo
+    # rules (sysadmins-sudo) silently don't apply: "I'm sorry <user>. I'm afraid I can't do
+    # that" (cd108 VM, 2026-09-30). Switch to classic sudo (/usr/bin/sudo.ws), which
+    # libsss-sudo plugs into. Local /etc/sudoers.d rules keep working. 24.04 has no sudo.ws
+    # (classic sudo is already /usr/bin/sudo), so this is skipped there.
+    - name: Is classic sudo installed as an alternative (Ubuntu 25.10+)?
+      stat:
+        path: /usr/bin/sudo.ws
+      register: sudo_ws
+
+    - name: Which sudo does /usr/bin/sudo run?
+      command: readlink -f /usr/bin/sudo
+      register: sudo_now
+      changed_when: false
+      when: sudo_ws.stat.exists
+
+    - name: Use classic sudo so FreeIPA sudo rules apply (sudo-rs ignores SSSD)
+      command: update-alternatives --set sudo /usr/bin/sudo.ws
+      when: sudo_ws.stat.exists and sudo_now.stdout != '/usr/bin/sudo.ws'
+
     - name: 'netgroup: drop NIS (a missing NIS server hangs logins)'
       lineinfile:
         path: /etc/nsswitch.conf

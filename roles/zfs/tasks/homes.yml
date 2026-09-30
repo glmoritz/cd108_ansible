@@ -1,0 +1,158 @@
+---
+# Course homes received from the server golden. Included from main.yml only
+# when zfs_receive_homes is true (every room except ca307).
+
+# --- initial receive of the golden course homes ---------------------------
+# Sent from the server, at most `zfs_send_concurrency` machines at a time
+# (task `throttle`): as each host finishes its receive, the next one starts.
+# mbuffer is a plain stream buffer here (decouples send/recv over ssh) — no
+# rate cap. Course homes carry their `Downloads` child, so the send is -R.
+# Recv targets are ssdpool/home/<user>, so the parent dataset must exist first —
+# the pool root exists, but ssdpool/home does not on a fresh clone.
+- name: Does the parent home dataset exist?
+  command: "zfs list -H -o name {{ zfs_pool }}/home"
+  register: home_parent
+  failed_when: false
+  changed_when: false
+
+- name: Create the parent home dataset (mounted at /home)
+  command: "zfs create -o mountpoint=/home {{ zfs_pool }}/home"
+  when: home_parent.rc != 0
+
+- name: Which course homes are already received?
+  command: "zfs list -H -o name {{ zfs_pool }}/home/{{ item }}"
+  register: home_present
+  failed_when: false
+  changed_when: false
+  loop: "{{ discipline_users }}"
+  loop_control: { label: "{{ item }}" }
+
+# -p (properties) NOT -R (recursive): send the home dataset with its properties
+# but WITHOUT its Downloads child. Downloads is course junk (e.g. 8 GB in one
+# home) that must not ride to every machine — each gets a fresh empty Downloads
+# below. -R would drag it along.
+- name: Initial receive of course homes from the server (N at a time, no Downloads)
+  shell: >-
+    zfs send -p {{ zfs_pool_server }}/golden/home/{{ item.item }}@{{ golden_snapshot }}
+    | mbuffer -q
+    | ssh -i {{ deploy_key_on_server }} -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{ admin_user }}@{{ ansible_host | default(inventory_hostname) }} "zfs recv -u -F {{ zfs_pool }}/home/{{ item.item }}"
+  delegate_to: "{{ server_host }}"
+  throttle: "{{ zfs_send_concurrency }}"
+  when: item.rc != 0
+  loop: "{{ home_present.results }}"
+  loop_control: { label: "{{ item.item }}" }
+
+# The golden's home datasets carry explicit mountpoints (…/golden/home/<user>);
+# reset them to inherit so they land at /home/<course>, then mount (root — recv
+# ran with -u because non-root can't mount on Linux). `zfs inherit` forces an
+# unmount+remount, which fails ("dataset is busy") on a re-converge while a
+# course user is logged in (broke cd106-05's resume, 2026-07-15) — so check the
+# effective mountpoint first and only inherit when it's actually wrong.
+- name: Read each home's current mountpoint
+  command: "zfs get -H -o value mountpoint {{ zfs_pool }}/home/{{ item }}"
+  register: home_mp_value
+  changed_when: false
+  loop: "{{ discipline_users }}"
+  loop_control: { label: "{{ item }}" }
+
+- name: Reset received homes to inherit the /home mountpoint (only when wrong)
+  command: "zfs inherit -r mountpoint {{ zfs_pool }}/home/{{ item.item }}"
+  when: item.stdout | trim != '/home/' + item.item
+  loop: "{{ home_mp_value.results }}"
+  loop_control: { label: "{{ item.item }}" }
+
+# `zfs set mountpoint=/home` FORCES an unmount+remount, which fails ("pool or
+# dataset is busy") on a re-run once /home and its child home datasets are already
+# mounted. So only set it when it's actually wrong, then mount idempotently
+# (`zfs mount -a` mounts what's missing and skips what's already mounted).
+- name: Read ssdpool/home's current mountpoint
+  command: "zfs get -H -o value mountpoint {{ zfs_pool }}/home"
+  register: home_mountpoint
+  changed_when: false
+
+- name: Point ssdpool/home at /home (only if it isn't already — avoids a busy remount)
+  command: "zfs set mountpoint=/home {{ zfs_pool }}/home"
+  when: home_mountpoint.stdout | trim != '/home'
+
+# -O (overlay) everywhere: useradd (common role) pre-creates /home/<user> with
+# its skeleton on the ext4 root BEFORE the pool exists, and plain `zfs mount`
+# refuses non-empty mountpoints — which is why homes showed up EMPTY (skeleton)
+# after a reboot on 2026-07-14. Overlay at converge time here, and via a
+# drop-in for boot-time zfs-mount.service below.
+- name: Mount all received home datasets (idempotent, overlay over skeletons)
+  command: "zfs mount -aO"
+  changed_when: false
+
+- name: Drop-in dir for zfs-mount.service
+  file: { path: /etc/systemd/system/zfs-mount.service.d, state: directory, mode: "0755" }
+
+- name: Overlay-mount at boot too (zfs-mount.service drop-in)
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/zfs-mount.service.d/override.conf
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/zfs). -O = overlay-mount: the course homes
+      # mount over non-empty useradd skeleton dirs; without it every boot
+      # leaves /home/<user> showing the empty ext4 skeleton.
+      [Service]
+      ExecStart=
+      ExecStart=/sbin/zfs mount -aO
+  register: zfs_mount_dropin
+
+- name: Reload systemd after the zfs-mount drop-in
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: zfs_mount_dropin.changed
+
+# Downloads is deliberately NOT synced from the golden (see the -p send above).
+# Give each course a fresh EMPTY Downloads dataset instead, owned by its user.
+- name: Which per-user Downloads datasets already exist?
+  command: "zfs list -H -o name {{ zfs_pool }}/home/{{ item }}/Downloads"
+  register: downloads_present
+  failed_when: false
+  changed_when: false
+  loop: "{{ discipline_users }}"
+  loop_control: { label: "{{ item }}" }
+
+- name: Create an empty Downloads dataset per course (not synced from golden)
+  command: "zfs create {{ zfs_pool }}/home/{{ item.item }}/Downloads"
+  when: item.rc != 0
+  loop: "{{ downloads_present.results }}"
+  loop_control: { label: "{{ item.item }}" }
+
+- name: Own each Downloads dir to its course user
+  ansible.builtin.file:
+    path: "/home/{{ item }}/Downloads"
+    state: directory
+    owner: "{{ item }}"
+    group: "{{ item }}"
+  loop: "{{ discipline_users }}"
+
+# Chrome/Chromium won't start when its profile carries a SingletonLock that names
+# a DIFFERENT host: it assumes the profile is open "on another computer", locks
+# it, and exits — silently, because it can't draw the warning dialog in a fresh
+# session (only "Unable to show message box" hits the log). Every course/admin
+# home is ZFS-cloned from the golden (authored on cd108-flashtest), so each
+# ~/.config/google-chrome ships `SingletonLock -> cd108-flashtest-<pid>` → chrome
+# dies on first launch on every clone. Clear ONLY cross-host locks: a lock naming
+# THIS host is a live local Chrome and must be left alone. Idempotent (nothing to
+# do once the stale locks are gone) and runs here because homes are mounted only
+# after the receive above (the desktop role runs before zfs).
+- name: Clear stale cross-host Chrome/Chromium SingletonLock from the cloned homes
+  shell: |
+    changed=0
+    host=$(hostname)
+    for u in {{ ([admin_user] + discipline_users) | join(' ') }}; do
+      for cfg in "/home/$u/.config/google-chrome" "/home/$u/.config/chromium"; do
+        lock="$cfg/SingletonLock"
+        [ -L "$lock" ] || continue
+        tgt=$(readlink "$lock")
+        if [ "${tgt%-*}" != "$host" ]; then
+          rm -f "$cfg/SingletonLock" "$cfg/SingletonCookie" "$cfg/SingletonSocket"
+          changed=1
+        fi
+      done
+    done
+    echo "changed=$changed"
+  register: chrome_singleton
+  changed_when: "'changed=1' in chrome_singleton.stdout"

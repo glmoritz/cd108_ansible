@@ -21,6 +21,12 @@
   serial: "{{ reset_serial | default(4) }}"
   gather_facts: false
   tasks:
+    # Rooms without golden course homes (ca307: FreeIPA users on NFS) have nothing
+    # to reset — and their /home is autofs, not ssdpool/home.
+    - name: Skip hosts that don't receive golden homes
+      ansible.builtin.meta: end_host
+      when: not (zfs_receive_homes | default(true) | bool)
+
     # A plain (non-incremental) `zfs recv -F` still refuses to clobber a
     # destination that carries snapshots foreign to the incoming stream --
     # e.g. sanoid's own autosnap_* snapshots, which every already-deployed
