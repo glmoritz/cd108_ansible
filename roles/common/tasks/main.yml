@@ -561,11 +561,14 @@
       WantedBy=multi-user.target
   register: arm_wol_unit
 
+# Same as the boot beacon below: `--check` doesn't really create the unit, so
+# enabling it would fail with "Could not find the requested service".
 - name: Enable the WoL re-arm service
   systemd:
     name: arm-wol.service
     enabled: true
     daemon_reload: "{{ arm_wol_unit is changed }}"
+  when: not ansible_check_mode
 
 # TODO(harvest): udev rule giving the practice UART kits a STABLE /dev symlink.
 #   ST-Link/J-Link/OpenOCD rules come from their -udev-rules packages already;
