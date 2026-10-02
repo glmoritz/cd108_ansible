@@ -54,12 +54,14 @@
 # Guard on the BUILD-TREE binary, not /usr/bin/sdrpp: machines that received
 # the (broken) server-built tarball already have /usr/bin/sdrpp and must still
 # rebuild; only a machine that compiled locally has build/sdrpp.
+# `--check` doesn't really clone, so the chdir would fail — skip it there.
 - name: Compile and install SDR++ (once)
   shell: |
     cmake -B build -DOPT_BUILD_USRP_SOURCE=ON
     cmake --build build -j"$(nproc)"
     cmake --install build
   args: { chdir: /usr/local/src/SDRPlusPlus, creates: /usr/local/src/SDRPlusPlus/build/sdrpp }
+  when: not ansible_check_mode
 
 # MIGRATION (2026-07-15, remove once the fleet has re-converged): the abandoned
 # build-once-distribute flow unpacked the SERVER's (26.04) /usr/share/uhd/4.9.0
@@ -92,13 +94,13 @@
 # Upstream's patch.sh overwrites every usrp_b210_fpga.bin with their
 # libresdr_b210.bin — the custom FPGA bitstream is the whole point of the
 # repo (the USB firmware .hex is stock and already comes from
-# uhd_images_downloader).
+# uhd_images_downloader). Skipped under `--check`: the clone above isn't real there.
 - name: Install the LibreSDR B210 FPGA image into the UHD images dir
   copy:
     src: /usr/local/src/LibreSDR_USRP/libresdr_b210.bin
     dest: "{{ (uhd_images.files | map(attribute='path') | first) }}/usrp_b210_fpga.bin"
     remote_src: true
-  when: uhd_images.files | length > 0
+  when: not ansible_check_mode and uhd_images.files | length > 0
 
 # ------------------ launcher (built from source, no packaged .desktop) --
 - name: Deploy the SDR++ desktop launcher
