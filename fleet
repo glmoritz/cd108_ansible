@@ -35,6 +35,9 @@ OVERLAY=(); [ -f "$OVERLAY_F" ] && OVERLAY=(-e @"$OVERLAY_F")
 die(){ echo "fleet: $*" >&2; exit 1; }
 need(){ command -v "$1" >/dev/null 2>&1 || die "missing '$1' — run this on cd108-server."; }
 
+# Preflight: never as root — ssh rejects the shared root:admins 0640 deploy key for
+# its OWNER (root) as "too open"; ansible does its own become on the targets.
+[ "$(id -u)" != 0 ] || die "don't run as root/sudo — run as yourself (IPA admins)."
 # Preflight: refuse to run anywhere but the server (where inventory+vault live).
 [ -f "$INV" ]   || die "inventory '$INV' not found — run inside /srv/cd108_ansible on cd108-server."
 [ -f "$VAULT" ] || die "vault password '$VAULT' not found — run on cd108-server."

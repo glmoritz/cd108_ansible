@@ -180,7 +180,10 @@ The server is enrolled in LabSC FreeIPA: admins log in **as themselves**, not as
 
 `./fleet` and `inventory/group_vars/all.yml` prefer these paths and fall back to
 `~/.vault_pass`, `~/.ssh/id_cd108_ansible` and `~/ip-overlay.yml` (moritz-desktop).
-ssh accepts the group-readable key because the user running it doesn't own it.
+ssh accepts the group-readable key because the user running it doesn't own it —
+which is why **`sudo ansible-playbook` fails** ("UNPROTECTED PRIVATE KEY FILE"):
+root owns it. Never sudo Ansible; log in as your IPA user (`daelt` is local and
+not in `admins`, so it can't read `/etc/cd108` at all).
 Use `umask 002` in a shell where you edit the checkout, so others can still write it.
 
 The VM is an `admin` enrollment: **no autofs, no NFS homes** (it and sigivestserver

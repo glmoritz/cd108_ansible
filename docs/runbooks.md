@@ -13,7 +13,11 @@ first so the commands make sense.
 > AUTH="--vault-password-file /etc/cd108/vault_pass --become-password-file /etc/cd108/vault_pass"
 > ```
 > The deploy key and vault password live in `/etc/cd108/` there (see
-> [Keys & secrets](#keys--secrets)); nothing to type. Long runs go in `tmux`, so a
+> [Keys & secrets](#keys--secrets)); nothing to type.
+> **Never `sudo ansible-playbook`.** Ansible does its own `become` on the targets.
+> Run as root, ssh rejects the shared key ("UNPROTECTED PRIVATE KEY FILE … 0640"),
+> because root owns the file. Log in as your own IPA user, not `daelt`: `daelt` is
+> local, not in `admins`, and can't read `/etc/cd108`. Long runs go in `tmux`, so a
 > dropped ssh doesn't kill them. Only **building the server VM itself** runs on
 > the KVM host (`moritz-pc`), because it talks to the local libvirt.
 
