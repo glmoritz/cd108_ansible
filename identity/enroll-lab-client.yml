@@ -12,8 +12,11 @@
 # machine_role:
 #   public    -> student workstation: local /home users are RELOCATED to /var/local, then /home
 #                is autofs-mounted from NFS.
-#   admin     -> admin host (the cd108 VM): IPA login + ipa CLI only — no automount, no /home changes.
-#                (The VM can't reach nfs1 anyway: macvtap blocks it from its own host.)
+#   admin     -> admin host (the cd108 VM): IPA login + ipa CLI only — NO automount at all, no /home
+#                changes; autofs is not installed, and stopped+disabled if present. (The VM can't reach
+#                nfs1 anyway: it and sigivestserver are macvtaps, which can't talk to their own host.)
+#                2026-10-02: autofs got installed here anyway, enabled itself, and on the next reboot
+#                pulled IPA's auto.home over /home via `automount: sss` — hiding every local home.
 #   professor -> personal machine: IPA login works, local /home is UNTOUCHED. The lab NFS homes are
 #                mounted read-on-access under {{ prof_homes_mount }} (default /mnt/labhomes/<user>) so
 #                the box can reach lab homes without any risk to the local desktop. Safe for a daily driver.
@@ -142,20 +145,26 @@
 
     # Install, then VERIFY the packages actually landed — tolerates pre-broken packages
     # (e.g. a busted fwupd) that make dpkg return non-zero even on a successful install.
+    # autofs + NFS client only where something gets automounted (public/professor); an admin host
+    # mounts nothing — on Ubuntu installing autofs alone enables it, and with `automount: sss` it
+    # takes /home from IPA's maps.
     - name: Install client packages (Ubuntu/Debian)
       shell: |
-        apt-get install -y freeipa-client python3-packaging autofs nfs-common sssd-tools || true
-        dpkg -l freeipa-client autofs nfs-common sssd-tools 2>/dev/null | grep -c '^ii'
+        apt-get install -y python3-packaging {{ deb_pkgs | join(' ') }} || true
+        dpkg -l {{ deb_pkgs | join(' ') }} 2>/dev/null | grep -c '^ii'
+      vars:
+        deb_pkgs: "{{ ['freeipa-client', 'sssd-tools']
+                      + ([] if machine_role == 'admin' else ['autofs', 'nfs-common']) }}"
       register: aptinstall
       changed_when: false
       # sssd-tools = sss_cache: freeipa-client doesn't pull it, and without it a stale SSSD cache
       # (e.g. a newly added SSH key) can't be flushed — deleting /var/lib/sss/db does NOT fix it.
-      failed_when: "(aptinstall.stdout_lines[-1] | int) < 4"
+      failed_when: "(aptinstall.stdout_lines[-1] | int) < (deb_pkgs | length)"
       when: ansible_os_family == "Debian"
 
     - name: Install client packages (Rocky/RHEL)
       dnf:
-        name: [ipa-client, autofs, nfs-utils]
+        name: "{{ ['ipa-client'] + ([] if machine_role == 'admin' else ['autofs', 'nfs-utils']) }}"
       when: ansible_os_family == "RedHat"
 
     - name: Is it already enrolled?
@@ -259,13 +268,14 @@
     # ---------- 5. Local-map autofs (bypasses the SSSD automount responder, which hangs) ----------
     # public    -> map on /home           (homes ARE the desktop home)
     # professor -> map on {{ prof_homes_mount }} (side mount; local /home stays the real desktop home)
+    # All roles: ipa-client-install sets `automount: sss`, which hands IPA's auto.master (/home ->
+    # auto.home) to any autofs on the box. Admin hosts get `files` too, with no maps = no mounts.
     - name: 'automount source = files (bypass SSSD automount responder, which hangs)'
       lineinfile:
         path: /etc/nsswitch.conf
         regexp: '^automount:'
         line: 'automount:      files'
-      when: machine_role in ['public', 'professor']
-      notify: restart autofs
+      notify: "{{ 'restart autofs' if machine_role in ['public', 'professor'] else 'restart sssd' }}"
 
     # --- PUBLIC: /home is the NFS home ---
     - name: auto.master.d entry for /home (public)
@@ -318,6 +328,19 @@
         enabled: true
         state: started
       when: machine_role in ['public', 'professor']
+
+    # --- ADMIN: no automounts, ever. Undo an autofs that a package install (or an older run of
+    # this playbook) left enabled — it would mount IPA's /home over the local homes.
+    - name: Which services exist (admin)
+      service_facts:
+      when: machine_role == 'admin'
+
+    - name: Stop + disable autofs (admin)
+      systemd:
+        name: autofs
+        enabled: false
+        state: stopped
+      when: machine_role == 'admin' and 'autofs.service' in ansible_facts.services
 
   handlers:
     - name: restart resolved

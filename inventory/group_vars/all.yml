@@ -16,7 +16,10 @@ ansible_user: "{{ admin_user }}"      # push connects over SSH as the admin acco
 # without a human unlocking a passphrase). The common role installs the
 # matching public key on every admin account; provisioning bakes it into the
 # server/golden. Keep the private half on the control node only.
-ansible_ssh_private_key_file: "~/.ssh/id_cd108_ansible"
+# On cd108-server it is SHARED by every IPA admin at /etc/cd108/ (root:admins 0640 —
+# ssh accepts a group-readable key the user doesn't own); elsewhere (moritz-desktop)
+# it is the per-user copy in ~/.ssh. MAINTENANCE.md §Shared control node.
+ansible_ssh_private_key_file: "{{ '/etc/cd108/id_cd108_ansible' if '/etc/cd108/id_cd108_ansible' is exists else '~/.ssh/id_cd108_ansible' }}"
 professor_ssh_pubkey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPt7TL+tEfuCQ6up+436oQ2+XJ8WeRNHbZFoSgUCtxKj cd108-ansible-control-node"
 
 # apt cache: apt-cacher-ng runs on the SERVER (confirmed on the golden, which

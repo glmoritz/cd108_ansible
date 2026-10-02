@@ -5,8 +5,8 @@ Everything below is done **from the lab server** (`cd108-server`) with the
 server can wake, patch, reboot and shut down every machine remotely.
 
 ```bash
-ssh daelt@cd108.tutu.eng.br      # into the server (holds inventory + vault + WoL)
-cd ~/cd108_ansible
+ssh <you>@cd108.tutu.eng.br      # your IPA login (any member of `admins`)
+cd /srv/cd108_ansible            # shared checkout — see "Shared control node"
 git pull                         # make sure fleet + roles are current
 ./fleet status all
 ```
@@ -104,7 +104,7 @@ These are the things that will bite you 3 months from now if they're not true.
    `cd108.tutu.eng.br:22` must be reachable from wherever you'll be. Confirm you
    can SSH in from **off-campus** (VPN or public route) — not just from the lab.
 
-3. **Keep the vault password.** `~/.vault_pass` on the server decrypts the
+3. **Keep the vault password.** `/etc/cd108/vault_pass` on the server decrypts the
    inventory and drives `sudo`. Without it, `fleet` converge/update/reset break.
    Make sure it's backed up somewhere you'll still have in 3 months.
 
@@ -121,7 +121,7 @@ These are the things that will bite you 3 months from now if they're not true.
   WoL disabled in BIOS (check #1 above), or it hasn't finished booting — wait a
   minute and re-check. A machine that never wakes needs a physical power button.
 - **Reachable but `sudo`/converge fails.** Almost always a missing/renamed
-  `~/.vault_pass`, or the machine isn't converged yet (`./fleet boot` /
+  `/etc/cd108/vault_pass` (are you in IPA `admins`? `id`), or the machine isn't converged yet (`./fleet boot` /
   `converge`).
 - **Boots into a Windows BSOD / dead to WoL.** That's the phantom Windows Boot
   Manager — `./fleet efifix <host>` (or a full `converge`) removes it. Every
@@ -150,8 +150,8 @@ Recovery, in order (do one step, confirm, then the next):
 # 2. Apply the 3.0 Gbps cap (writes grub; small, low-risk).
 git pull
 ansible-playbook site.yml -i inventory/hosts.yml --tags common --limit cd108 \
-  -e @~/ip-overlay.yml \
-  --vault-password-file ~/.vault_pass --become-password-file ~/.vault_pass
+  -e @/etc/cd108/ip-overlay.yml \
+  --vault-password-file /etc/cd108/vault_pass --become-password-file /etc/cd108/vault_pass
 
 # 3. Reboot to activate the cap (safe now — initramfs is valid again).
 ./fleet reboot cd108
@@ -163,6 +163,28 @@ After the cap is active, future kernel/initramfs upgrades should stop tripping
 the A400. If `fix-dpkg` still shows a non-zero count on a host, re-run it for
 that host; a disk that *never* completes may be genuinely failing (check
 `smartctl -H /dev/sda`).
+
+---
+
+## Shared control node (cd108 VM)
+
+The server is enrolled in LabSC FreeIPA: admins log in **as themselves**, not as
+`daelt`, so nothing the fleet needs may live in a personal home.
+
+| What | Where | Owner / mode |
+|---|---|---|
+| repo checkout | `/srv/cd108_ansible` | `root:admins`, dirs `2775`, `core.sharedRepository=group` |
+| deploy key | `/etc/cd108/id_cd108_ansible` | `root:admins 0640` |
+| vault + become pass | `/etc/cd108/vault_pass` | `root:admins 0640` |
+| IP overlay | `/etc/cd108/ip-overlay.yml` | `root:admins 0640` |
+
+`./fleet` and `inventory/group_vars/all.yml` prefer these paths and fall back to
+`~/.vault_pass`, `~/.ssh/id_cd108_ansible` and `~/ip-overlay.yml` (moritz-desktop).
+ssh accepts the group-readable key because the user running it doesn't own it.
+Use `umask 002` in a shell where you edit the checkout, so others can still write it.
+
+The VM is an `admin` enrollment: **no autofs, no NFS homes** (it and sigivestserver
+are macvtaps and can't reach their own host). Local homes stay in `/home`.
 
 ---
 
