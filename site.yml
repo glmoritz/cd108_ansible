@@ -1,7 +1,8 @@
 ---
 # Normal converge. Safe to re-run. Does NOT reset homes (see reset-homes.yml).
-# Always dry-run ONE machine first:
-#   ansible-playbook site.yml --limit cd108-test-01 --check --diff --ask-vault-pass
+# Run on the server VM (ssh <you>@cd108.tutu.eng.br; cd /srv/cd108_ansible). Always dry-run ONE machine first:
+#   ansible-playbook site.yml --limit cd108-21 --check --diff \
+#     --vault-password-file /etc/cd108/vault_pass --become-password-file /etc/cd108/vault_pass
 # Roles are tagged so you can converge incrementally, e.g. --tags common,zfs
 - name: Server — infra hub (student machine on steroids)
   hosts: server

@@ -1,8 +1,21 @@
 # Runbooks — step-by-step procedures
 
 Practical, copy-pasteable procedures. Read [`architecture.md`](architecture.md)
-first so the commands make sense. Run everything from the repo root on the
-**control node** (`moritz-pc`) unless a step says otherwise.
+first so the commands make sense.
+
+> **Where to run things.** Anything that touches the lab machines (converge,
+> reset homes, `./fleet`) runs **on the server VM**, logged in as yourself, in
+> the shared checkout:
+> ```bash
+> ssh <you>@cd108.tutu.eng.br          # your LabSC/IPA login; must be in IPA `admins`
+> cd /srv/cd108_ansible
+> git pull --ff-only                   # ansible reads the roles at start: pull FIRST
+> AUTH="--vault-password-file /etc/cd108/vault_pass --become-password-file /etc/cd108/vault_pass"
+> ```
+> The deploy key and vault password live in `/etc/cd108/` there (see
+> [Keys & secrets](#keys--secrets)); nothing to type. Long runs go in `tmux`, so a
+> dropped ssh doesn't kill them. Only **building the server VM itself** runs on
+> the KVM host (`moritz-pc`), because it talks to the local libvirt.
 
 Jump to: [Day one](#day-one-first-time-setup) · [Keys & secrets](#keys--secrets)
 · [Build the server VM](#build-or-rebuild-the-server-vm) · [Prepare the
@@ -17,7 +30,8 @@ homes](#reset-homes-destructive) · [Windows VM](#the-windows-emergency-vm) ·
 
 ## Day one (first-time setup)
 
-You need this on the control node:
+The server VM is already a ready control node; this is only for setting up
+**another** one (e.g. `moritz-pc`, to rebuild the server VM):
 
 1. **Ansible + collections + tools**
    ```bash
@@ -42,9 +56,11 @@ You need this on the control node:
 ### The deploy key (fleet authentication)
 
 Ansible authenticates to every machine with a **passphrase-less** ed25519 key so
-unattended/overnight runs work without a human. It lives at
-`~/.ssh/id_cd108_ansible` and is wired in `group_vars/all.yml`
-(`ansible_ssh_private_key_file` + `professor_ssh_pubkey`).
+unattended/overnight runs work without a human. On the server VM it is shared by
+all IPA admins at `/etc/cd108/id_cd108_ansible` (`root:admins 0640`); on any
+other control node it's `~/.ssh/id_cd108_ansible`. `group_vars/all.yml` uses the
+`/etc/cd108` one when it exists (`ansible_ssh_private_key_file` +
+`professor_ssh_pubkey`).
 
 If you ever need to recreate it:
 ```bash
@@ -64,7 +80,11 @@ Secrets never go in the repo as plaintext. They're in ansible-vault files, e.g.
 ansible-vault view inventory/group_vars/cd108/vault.yml     # look
 ansible-vault edit inventory/group_vars/cd108/vault.yml     # change
 ```
-Any play that touches cd108 hosts needs `--ask-vault-pass` (or `~/.vault_pass`).
+Any play that touches lab hosts needs the vault password **and** the sudo
+password for `daelt` on the machines. They are the same string, kept on the server
+VM at `/etc/cd108/vault_pass`, so pass the file for both. That's the `$AUTH` from
+the top of this page; `./fleet` does it for you:
+`--vault-password-file /etc/cd108/vault_pass --become-password-file /etc/cd108/vault_pass`.
 
 ---
 
@@ -222,12 +242,16 @@ Keep the master image small by excluding the ZFS data partition.
 5. Reboot. The machine comes up carrying the golden's hostname; it's reachable
    by its MAC-derived IPv6 (see [architecture → Addressing](architecture.md#addressing--no-fixed-ips-no-registry)).
 6. Make sure it's in `inventory/hosts.yml` (see [Add a lab
-   machine](#add-a-lab-machine)), then converge it — this sets its real
+   machine](#add-a-lab-machine)), then converge it from the server VM (see
+   [Where to run things](#runbooks--step-by-step-procedures)). This sets its real
    hostname, builds ZFS, and receives homes:
    ```bash
-   ansible-playbook site.yml --limit <hostname> --check --diff --ask-vault-pass
-   ansible-playbook site.yml --limit <hostname> --ask-vault-pass
+   ansible-playbook site.yml --limit <hostname> --check --diff $AUTH
+   ansible-playbook site.yml --limit <hostname> $AUTH
    ```
+   If it was **re-flashed with its old `ssdpool` partition still intact**, run
+   `sudo zpool import -f -N ssdpool` on it first. Otherwise the `zfs` role sees
+   no pool and rebuilds it, wiping the homes.
 
 ### B) Capture a new master image (from the reference machine)
 
@@ -290,24 +314,33 @@ netboot + DRBL multicast for whole-lab rebuilds. Full roadmap:
 `site.yml` is the normal, **safe-to-re-run** configuration. It never resets
 homes.
 
+Run it **on the server VM**, from `/srv/cd108_ansible`, with `$AUTH` set (see
+[Where to run things](#runbooks--step-by-step-procedures)):
+```bash
+ssh <you>@cd108.tutu.eng.br
+cd /srv/cd108_ansible && git pull --ff-only
+AUTH="--vault-password-file /etc/cd108/vault_pass --become-password-file /etc/cd108/vault_pass"
+./fleet wake cd108-21 && ./fleet status cd108-21     # it must be up first
+```
+
 **Always dry-run one machine first:**
 ```bash
-ansible-playbook site.yml --limit cd108-b12 --check --diff --ask-vault-pass
+ansible-playbook site.yml --limit cd108-21 --check --diff $AUTH
 ```
 Then apply to that one machine, validate it by hand, and only then roll out:
 ```bash
-ansible-playbook site.yml --limit cd108-b12 --ask-vault-pass          # one machine
-ansible-playbook site.yml --limit cd108 --ask-vault-pass              # a whole lab
-ansible-playbook site.yml --ask-vault-pass                            # everything
+ansible-playbook site.yml --limit cd108-21 $AUTH       # one machine  (= ./fleet converge cd108-21)
+ansible-playbook site.yml --limit cd108 $AUTH          # a whole lab
+ansible-playbook site.yml $AUTH                        # everything
 ```
+A full converge takes a while. Start it inside `tmux new -s converge` so it
+survives a dropped ssh, and `| tee ~/converge-$(date +%F).log` if you want a record.
 The `zfs` role receives the golden homes + Windows VM **N machines at a time**
 (`zfs_send_concurrency`, default 4). To have more than 4 truly in parallel,
 raise `forks` in `ansible.cfg`.
 
 **Wake sleeping machines first** (WoL is enabled per NIC by `roles/common`):
-```bash
-ansible-playbook site.yml --limit cd108 ...   # after waking them, e.g. wakeonlan <MAC>
-```
+`./fleet wake cd108` sends the magic packets, then `./fleet status cd108` until they're up.
 
 ---
 
@@ -317,7 +350,7 @@ Between semesters, after students have uploaded their work. This **wipes** the
 course homes and re-sends the clean golden. It is **not** in `site.yml`.
 
 ```bash
-ansible-playbook reset-homes.yml --limit cd108 --ask-vault-pass
+ansible-playbook reset-homes.yml --limit cd108 $AUTH     # on the server VM, see top
 ```
 It rolls in waves of 4 machines (`serial`, override with `-e reset_serial=N`).
 Confirm students have saved their work before running.
