@@ -78,6 +78,8 @@ zfs_send_concurrency: 4
 # The zfs recv is PUSHED from the server over SSH as {{ admin_user }} using the
 # deploy key (the client already trusts it — no root SSH). This is that key's
 # path ON THE SERVER, which root reads when the send task is delegated there.
+# Must NOT be the shared /etc/cd108 copy: that one is root-owned + group-readable,
+# and ssh rejects such a key for its owner (root). Keep daelt's 0600 copy.
 deploy_key_on_server: "/home/{{ admin_user | default('daelt') }}/.ssh/id_cd108_ansible"
 
 # --- Boot beacon (phone-home) ---------------------------------------------

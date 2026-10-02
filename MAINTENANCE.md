@@ -150,7 +150,6 @@ Recovery, in order (do one step, confirm, then the next):
 # 2. Apply the 3.0 Gbps cap (writes grub; small, low-risk).
 git pull
 ansible-playbook site.yml -i inventory/hosts.yml --tags common --limit cd108 \
-  -e @/etc/cd108/ip-overlay.yml \
   --vault-password-file /etc/cd108/vault_pass --become-password-file /etc/cd108/vault_pass
 
 # 3. Reboot to activate the cap (safe now — initramfs is valid again).
@@ -176,10 +175,18 @@ The server is enrolled in LabSC FreeIPA: admins log in **as themselves**, not as
 | repo checkout | `/srv/cd108_ansible` | `root:admins`, dirs `2775`, `core.sharedRepository=group` |
 | deploy key | `/etc/cd108/id_cd108_ansible` | `root:admins 0640` |
 | vault + become pass | `/etc/cd108/vault_pass` | `root:admins 0640` |
-| IP overlay | `/etc/cd108/ip-overlay.yml` | `root:admins 0640` |
 
 `./fleet` and `inventory/group_vars/all.yml` prefer these paths and fall back to
-`~/.vault_pass`, `~/.ssh/id_cd108_ansible` and `~/ip-overlay.yml` (moritz-desktop).
+`~/.vault_pass` and `~/.ssh/id_cd108_ansible` (moritz-desktop).
+**Keep `~daelt/.ssh/id_cd108_ansible` too.** The zfs push (homes and Windows VM) runs
+on the server as **root** and uses that copy (`deploy_key_on_server`). Root can't use
+the `/etc/cd108` copy, because ssh rejects a group-readable key for its owner.
+
+Machines are addressed by their phone-home beacon IP, falling back to EUI-64
+IPv6. A machine that has never been converged has neither, so pin it for one run with an
+**inventory** overlay (`-i`), never `-e ansible_host=`: extra vars also redirect
+the zfs send that is delegated to the server, so it runs on the client and fails.
+See runbooks.md → Converge.
 ssh accepts the group-readable key because the user running it doesn't own it —
 which is why **`sudo ansible-playbook` fails** ("UNPROTECTED PRIVATE KEY FILE"):
 root owns it. Never sudo Ansible; log in as your IPA user (`daelt` is local and

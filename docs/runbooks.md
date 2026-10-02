@@ -327,6 +327,18 @@ AUTH="--vault-password-file /etc/cd108/vault_pass --become-password-file /etc/cd
 ./fleet wake cd108-21 && ./fleet status cd108-21     # it must be up first
 ```
 
+**A machine that was never converged** (fresh flash: golden hostname, no
+phone-home beacon yet, WoL not armed) can't be woken or found by `./fleet`. If you
+know its IP, pin it with a one-off **inventory** file, added with a second `-i`:
+```bash
+printf 'all:\n  hosts:\n    cd108-21: { ansible_host: 103.0.2.18 }\n' > ~/pin.yml
+ansible-playbook site.yml -i inventory/ -i ~/pin.yml --limit cd108-21 $AUTH
+```
+**Never `-e ansible_host=…`.** Extra vars override *every* host's address,
+including the server's when the zfs send is delegated to it. The send then runs on
+the client: "cannot open 'ssdpool/golden/windows': dataset does not exist". After
+the first converge the machine beacons on every boot, and the pin is no longer needed.
+
 **Always dry-run one machine first:**
 ```bash
 ansible-playbook site.yml --limit cd108-21 --check --diff $AUTH

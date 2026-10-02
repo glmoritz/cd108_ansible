@@ -29,8 +29,6 @@ VAULT="${FLEET_VAULT:-$(first_of /etc/cd108/vault_pass "$HOME/.vault_pass")}"
 KEY="${FLEET_SSH_KEY:-$(first_of /etc/cd108/id_cd108_ansible "$HOME/.ssh/id_cd108_ansible")}"
 BCAST="${FLEET_BROADCAST:-103.0.31.255}"     # 103.0.0.0/19 directed broadcast
 AUTH=(--vault-password-file "$VAULT" --become-password-file "$VAULT")
-OVERLAY_F="$(first_of /etc/cd108/ip-overlay.yml "$HOME/ip-overlay.yml")"
-OVERLAY=(); [ -f "$OVERLAY_F" ] && OVERLAY=(-e @"$OVERLAY_F")
 
 die(){ echo "fleet: $*" >&2; exit 1; }
 need(){ command -v "$1" >/dev/null 2>&1 || die "missing '$1' — run this on cd108-server."; }
@@ -163,17 +161,17 @@ case "$cmd" in
       "${AUTH[@]}" -o 2>/dev/null | sed -E 's/ \| CHANGED \| rc=0 \| \(stdout\) /  /' | sort ;;
 
   efifix)
-    ansible-playbook site.yml -i "$INV" --tags efi --limit "$target" "${OVERLAY[@]}" "${AUTH[@]}" ;;
+    ansible-playbook site.yml -i "$INV" --tags efi --limit "$target" "${AUTH[@]}" ;;
 
   converge)
-    ansible-playbook site.yml -i "$INV" --limit "$target" "${OVERLAY[@]}" "${AUTH[@]}" ;;
+    ansible-playbook site.yml -i "$INV" --limit "$target" "${AUTH[@]}" ;;
 
   restore-homes)
     mapfile -t hs < <(hosts_of "$target")
     echo "!! DESTRUCTIVE: wipes local homes back to the server golden (students lose"
     echo "!! anything not uploaded to the cloud). Target: ${#hs[@]} machine(s)."
     confirm "reset the homes of" "${#hs[@]}"
-    ansible-playbook reset-homes.yml -i "$INV" --limit "$target" "${OVERLAY[@]}" "${AUTH[@]}" ;;
+    ansible-playbook reset-homes.yml -i "$INV" --limit "$target" "${AUTH[@]}" ;;
 
   ssh)
     # ansible_host/ansible_user are runtime Jinja (beacon IP, admin_user) that
