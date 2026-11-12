@@ -5,6 +5,10 @@
 - name: reload udev
   command: udevadm control --reload-rules
 
+# Re-apply tty rules to ports already plugged in (after `reload udev`).
+- name: retrigger tty
+  command: udevadm trigger --subsystem-match=tty --action=change
+
 - name: reload sshd
   ansible.builtin.systemd: { name: ssh, state: reloaded }
 

@@ -208,6 +208,37 @@
       user: { name: "{{ item }}", groups: docker, append: true }
       loop: "{{ docker_users }}"
 
+    # --- USB serial (ttyACM*/ttyUSB*) for the microcontroller kits -----------
+    # Stock Ubuntu: root:dialout 0660, and the golden's dialout group was EMPTY,
+    # so `microcontroladores` got "Permission denied" on /dev/ttyACM0. On top,
+    # ModemManager probes every new ttyACM with AT commands for a few seconds
+    # after plug ("Device or resource busy", garbage sent to the MCU), and
+    # brltty grabs common USB-serial bridges. Lab PCs have no modems or braille
+    # displays: open the ports to everyone, keep MM's hands off, drop brltty.
+    - name: Put serial-kit users in dialout
+      user: { name: "{{ item }}", groups: dialout, append: true }
+      loop: "{{ dialout_users }}"
+      tags: [serial]
+
+    - name: USB serial ports world read/write, ignored by ModemManager
+      copy:
+        dest: /etc/udev/rules.d/99-cd108-serial.rules
+        mode: "0644"
+        content: |
+          # Managed by Ansible (roles/common). Lab kits: any user may open them.
+          SUBSYSTEM=="tty", KERNEL=="ttyACM[0-9]*|ttyUSB[0-9]*", GROUP="dialout", MODE="0666", ENV{ID_MM_DEVICE_IGNORE}="1"
+      notify: [reload udev, retrigger tty]
+      tags: [serial]
+
+    - name: Stop and mask ModemManager (no modems; it hijacks fresh ttyACM ports)
+      systemd: { name: ModemManager, state: stopped, enabled: false, masked: true }
+      when: not ansible_check_mode
+      tags: [serial]
+
+    - name: Remove brltty (steals CH34x/FTDI USB-serial adapters)
+      apt: { name: brltty, state: absent, purge: true }
+      tags: [serial]
+
 - name: Install OpenSSH server
   apt: { name: openssh-server, state: present }
 

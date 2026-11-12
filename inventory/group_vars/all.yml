@@ -126,6 +126,11 @@ discipline_users:
   - redes
   - estudante
 
+# Course accounts in `dialout` (USB-serial kits). The 99-cd108-serial udev rule
+# already makes ttyACM*/ttyUSB* 0666; membership is belt-and-braces for tools
+# (Arduino IDE, etc.) that check the group instead of just opening the port.
+dialout_users: "{{ discipline_users + ['daelt'] }}"
+
 # Receive the golden course homes (above) into ssdpool/home at /home. Rooms whose
 # users are FreeIPA accounts with fresh NFS homes (ca307) turn this off.
 zfs_receive_homes: true
